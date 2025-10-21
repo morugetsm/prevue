@@ -1,0 +1,663 @@
+mod engine;
+
+use engine::Engine;
+use std::{cell::RefCell, rc::Rc, str::FromStr, sync::LazyLock};
+
+use boa_engine::{JsString, JsValue};
+use html5ever::{
+    serialize,
+    tendril::{Tendril, TendrilSink},
+};
+use markup5ever_rcdom::{Handle, Node, NodeData, RcDom, SerializableHandle};
+use regex::Regex;
+use serde::Serialize;
+
+static SYNTAX_MUSTACHE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"\{\{\s*(.*?)\s*\}\}"#).unwrap());
+static SYNTAX_FOR: LazyLock<Regex> = LazyLock::new(|| {
+    regex::Regex::new(r#"^\s*\(?\s*(?P<value>\p{XID_Start}\p{XID_Continue}*)(?:\s*,\s*(?P<key>\p{XID_Start}\p{XID_Continue}*))?(?:\s*,\s*(?P<index>\p{XID_Start}\p{XID_Continue}*))?\s*\)?\s+(?:of|in)\s+(?P<iter>\p{XID_Start}\p{XID_Continue}*(?:\.\p{XID_Start}\p{XID_Continue}*|\[\d+\]|\[['\"][^'\"]+['\"]\])*)\s*$"#).unwrap()
+});
+static SYNTAX_BIND_ARG: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"^(?:(?:v-bind:)|:)(?P<arg>\[[^\]]+\]|[A-Za-z_][A-Za-z0-9_\-:]*)$"#).unwrap()
+});
+static SYNTAX_BIND_OBJECT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"^v-bind$"#).unwrap());
+
+pub fn render(document: String, payload: impl Serialize) -> Result<String, anyhow::Error> {
+    let dom = html5ever::parse_document(RcDom::default(), Default::default())
+        .from_utf8()
+        .read_from(&mut document.as_bytes())?;
+    let mut engine = engine::Engine::new(payload);
+
+    traverse(&dom.document.clone(), &mut engine);
+
+    let mut buff = Vec::new();
+    let document: SerializableHandle = dom.document.clone().into();
+    serialize(&mut buff, &document, Default::default())?;
+
+    let html = String::from_utf8(buff)?;
+    Ok(html)
+}
+
+fn traverse(handle: &Handle, engine: &mut Engine) {
+    // hydrate
+    match &handle.data {
+        NodeData::Element { attrs, .. } => {
+            // Collect v-bind operations first to avoid borrow conflicts.
+            let mut renames: Vec<(usize, String, String)> = Vec::new();
+            let mut removals: Vec<usize> = Vec::new();
+            let mut additions: Vec<(String, html5ever::QualName, String)> = Vec::new();
+
+            {
+                let attrs_ro = attrs.borrow();
+                for (i, attr) in attrs_ro.iter().enumerate() {
+                    let name_ref: &str = attr.name.local.as_ref();
+
+                    // v-bind object form: v-bind
+                    if name_ref == "v-bind" && SYNTAX_BIND_OBJECT.is_match(name_ref) {
+                        let expr = attr.value.to_string();
+                        if let Ok(js_val) = engine.eval(expr.as_str())
+                            && let Ok(json_val) = js_val.to_json(&mut engine.context)
+                            && let Some(obj) = json_val.as_object()
+                        {
+                            for (key, val) in obj.iter() {
+                                // skip null
+                                if val.is_null() {
+                                    continue;
+                                }
+                                let value_str = if val.is_string() {
+                                    val.as_str().unwrap_or("").to_string()
+                                } else {
+                                    val.to_string()
+                                };
+                                additions.push((key.clone(), attr.name.clone(), value_str));
+                            }
+                            removals.push(i);
+                        }
+                        continue;
+                    }
+
+                    // v-bind with arg: :attr or v-bind:attr
+                    if let Some(caps) = SYNTAX_BIND_ARG.captures(name_ref) {
+                        let arg_raw = caps
+                            .name("arg")
+                            .map(|m| m.as_str().to_string())
+                            .unwrap_or_default();
+
+                        let value_expr_raw = attr.value.to_string();
+                        let value_expr_trim = value_expr_raw.trim();
+
+                        // dynamic arg shorthand without value => not supported, drop the attribute
+                        if arg_raw.starts_with('[')
+                            && arg_raw.ends_with(']')
+                            && value_expr_trim.is_empty()
+                        {
+                            removals.push(i);
+                            continue;
+                        }
+
+                        // resolve arg (evaluate inside [] if dynamic)
+                        let mut arg = arg_raw.clone();
+                        if arg_raw.starts_with('[') && arg_raw.ends_with(']') && arg_raw.len() >= 2
+                        {
+                            let inner = &arg_raw[1..arg_raw.len() - 1];
+                            let Some(resolved) = engine.eval_str(inner) else {
+                                removals.push(i);
+                                continue;
+                            };
+                            if resolved.trim().is_empty() {
+                                removals.push(i);
+                                continue;
+                            }
+                            arg = resolved;
+                        }
+
+                        // shorthand without value => evaluate by arg name itself
+                        let value_expr = if value_expr_trim.is_empty() {
+                            arg.clone()
+                        } else {
+                            value_expr_raw
+                        };
+
+                        // evaluate value using eval_str-only; drop on nullish markers
+                        if let Some(value_str) = engine.eval_str(value_expr.as_str()) {
+                            // Plan to rename this attribute in-place and set its value
+                            renames.push((i, arg, value_str));
+                        } else {
+                            // evaluation failed: drop attribute for safety
+                            removals.push(i);
+                        }
+                        continue;
+                    }
+                }
+            }
+
+            // Apply renames (in-place)
+            if !renames.is_empty() {
+                let mut attrs_mut = attrs.borrow_mut();
+                for (idx, new_local, new_value) in renames.into_iter() {
+                    if let Some(attr) = attrs_mut.get_mut(idx) {
+                        attr.name.local = html5ever::LocalName::from(new_local.as_str());
+                        attr.value = Tendril::from_str(new_value.as_str()).unwrap();
+                    }
+                }
+            }
+
+            // Apply removals (from the end)
+            if !removals.is_empty() {
+                let mut attrs_mut = attrs.borrow_mut();
+                removals.sort_unstable();
+                for idx in removals.into_iter().rev() {
+                    let _ = attrs_mut.remove(idx);
+                }
+            }
+
+            // Apply additions
+            if !additions.is_empty() {
+                let mut attrs_mut = attrs.borrow_mut();
+                for (local_name, template_qn, value) in additions.into_iter() {
+                    // If attribute already exists, update; else push
+                    if let Some(existing) = attrs_mut
+                        .iter_mut()
+                        .find(|a| a.name.local.as_ref() == local_name.as_str())
+                    {
+                        existing.value = Tendril::from_str(value.as_str()).unwrap();
+                    } else {
+                        let qn = html5ever::QualName::new(
+                            template_qn.prefix,
+                            template_qn.ns,
+                            html5ever::LocalName::from(local_name.as_str()),
+                        );
+                        attrs_mut.push(html5ever::Attribute {
+                            name: qn,
+                            value: Tendril::from_str(value.as_str()).unwrap(),
+                        });
+                    }
+                }
+            }
+        }
+        NodeData::Text { contents } => {
+            let mut cont = contents.borrow_mut();
+
+            let reps: Vec<(std::ops::Range<usize>, String)> = SYNTAX_MUSTACHE
+                .captures_iter(&cont)
+                .map(|cpts| {
+                    (
+                        cpts.get(0).unwrap().range(),
+                        cpts.get(1).unwrap().as_str().to_owned(),
+                    )
+                })
+                .collect();
+
+            for (rng, key) in reps.into_iter().rev() {
+                let evaluated = engine.eval_str(key.as_str()).unwrap_or_default();
+
+                let mut text_value = cont.to_string();
+                text_value.replace_range(rng, &evaluated);
+
+                *cont = Tendril::from_str(&text_value).unwrap();
+            }
+        }
+        _ => (),
+    }
+
+    let snapshot: Vec<Handle> = handle.children.borrow().iter().cloned().collect();
+
+    for node in snapshot.iter() {
+        match &node.data {
+            NodeData::Element {
+                attrs,
+                template_contents,
+                ..
+            } => {
+                // <template>
+                if node.children.borrow().is_empty()
+                    && let Some(tc) = template_contents.take()
+                {
+                    let tc_children: Vec<Handle> = tc.children.borrow().iter().cloned().collect();
+                    for tc_child in tc_children.iter() {
+                        let child = deep_clone_subtree(tc_child);
+                        child.parent.replace(Some(Rc::downgrade(node)));
+                        node.children.borrow_mut().push(child);
+                    }
+                }
+
+                // v-if
+                let attr_idx = attrs
+                    .borrow()
+                    .iter()
+                    .position(|attr| &attr.name.local == "v-if");
+                if let Some(idx) = attr_idx {
+                    let attr_if = attrs.borrow_mut().remove(idx);
+                    let attr_value = attr_if.value.to_string();
+                    if !engine.eval_bool(&attr_value).unwrap_or(false) {
+                        remove_leading_whitespace_text(node);
+                        remove_node(node);
+                        continue;
+                    }
+                }
+
+                // v-for
+                let attr_idx = attrs
+                    .borrow()
+                    .iter()
+                    .position(|attr| &attr.name.local == "v-for");
+                if let Some(idx) = attr_idx {
+                    let attr_for = attrs.borrow_mut().remove(idx);
+                    let attr_value = attr_for.value.to_string();
+
+                    let Some(syntax) = SYNTAX_FOR.captures(attr_value.as_str()) else {
+                        remove_node(node);
+                        continue;
+                    };
+                    let Some(value_iden) = syntax.name("value") else {
+                        remove_node(node);
+                        continue;
+                    };
+                    let key_iden_opt = syntax.name("key");
+                    let index_iden_opt = syntax.name("index");
+                    let Some(iter_iden_opt) = syntax.name("iter") else {
+                        remove_node(node);
+                        continue;
+                    };
+
+                    let mut anchor = node.clone();
+                    let separator_opt = leading_whitespace_text(node);
+                    match engine.eval(iter_iden_opt.as_str()) {
+                        Ok(JsValue::Object(obj)) if obj.is_array() => {
+                            let total = obj
+                                .get(JsString::from("length"), &mut engine.context)
+                                .ok()
+                                .and_then(|v| v.to_u32(&mut engine.context).ok())
+                                .unwrap_or(0);
+
+                            for index in 0..total {
+                                if engine.enter_scope().is_err() {
+                                    continue;
+                                }
+                                let item = obj
+                                    .get(JsString::from(index.to_string()), &mut engine.context)
+                                    .unwrap_or(JsValue::undefined());
+                                engine.set_val(value_iden.as_str(), item);
+                                if let Some(key_iden) = key_iden_opt {
+                                    engine.set_val(key_iden.as_str(), JsValue::new(index as i32));
+                                }
+                                if let Some(index_iden) = index_iden_opt {
+                                    engine.set_val(index_iden.as_str(), JsValue::new(index as i32));
+                                }
+                                let child = deep_clone_subtree(node);
+                                traverse(&child, engine);
+                                engine.exit_scope();
+                                insert_after(&anchor, &child);
+                                anchor = child;
+                                if (index as usize) + 1 < (total as usize)
+                                    && let Some(sep) = &separator_opt
+                                {
+                                    let sep_node = make_text_node(sep);
+                                    insert_after(&anchor, &sep_node);
+                                    anchor = sep_node;
+                                }
+                            }
+                        }
+                        Ok(JsValue::Object(obj)) => {
+                            let keys_arr = engine
+                                .eval(format!("Object.keys(({}))", iter_iden_opt.as_str()).as_str())
+                                .ok();
+                            if let Some(JsValue::Object(keys_obj)) = keys_arr {
+                                let total = keys_obj
+                                    .get(JsString::from("length"), &mut engine.context)
+                                    .ok()
+                                    .and_then(|v| v.to_u32(&mut engine.context).ok())
+                                    .unwrap_or(0);
+
+                                for index in 0..total {
+                                    if engine.enter_scope().is_err() {
+                                        continue;
+                                    }
+                                    let key_val = keys_obj
+                                        .get(JsString::from(index.to_string()), &mut engine.context)
+                                        .unwrap_or(JsValue::undefined());
+                                    let key_jsstr = key_val
+                                        .to_string(&mut engine.context)
+                                        .unwrap_or_else(|_| JsString::from(""));
+                                    let value = obj
+                                        .get(key_jsstr.clone(), &mut engine.context)
+                                        .unwrap_or(JsValue::undefined());
+
+                                    engine.set_val(value_iden.as_str(), value);
+                                    if let Some(key_iden) = key_iden_opt {
+                                        engine.set_val(key_iden.as_str(), JsValue::from(key_jsstr));
+                                    }
+                                    if let Some(index_iden) = index_iden_opt {
+                                        engine.set_val(
+                                            index_iden.as_str(),
+                                            JsValue::new(index as i32),
+                                        );
+                                    }
+                                    let child = deep_clone_subtree(node);
+                                    traverse(&child, engine);
+                                    engine.exit_scope();
+                                    insert_after(&anchor, &child);
+                                    anchor = child;
+                                    if (index as usize) + 1 < (total as usize)
+                                        && let Some(sep) = &separator_opt
+                                    {
+                                        let sep_node = make_text_node(sep);
+                                        insert_after(&anchor, &sep_node);
+                                        anchor = sep_node;
+                                    }
+                                }
+                            }
+                        }
+                        _ => (),
+                    }
+                    remove_node(node);
+                    continue;
+                }
+
+                traverse(node, engine);
+            }
+            NodeData::Text { .. } => {
+                traverse(node, engine);
+            }
+            _ => (),
+        }
+    }
+
+    let snapshot: Vec<Handle> = handle.children.borrow().iter().cloned().collect();
+    for node in snapshot.iter() {
+        if let NodeData::Element { name, .. } = &node.data
+            && name.local.as_ref() == "template"
+        {
+            let snapshot_children: Vec<Handle> = node.children.borrow().iter().cloned().collect();
+            if !snapshot_children.is_empty() {
+                // Get the leading whitespace before this template (for proper indentation)
+                let separator_opt = leading_whitespace_text(node);
+                
+                // Filter out all whitespace-only text nodes
+                let trimmed_children: Vec<Handle> = snapshot_children
+                    .iter()
+                    .filter(|child| !is_whitespace_text_node(child))
+                    .cloned()
+                    .collect();
+                
+                if !trimmed_children.is_empty() {
+                    let mut clones: Vec<Handle> =
+                        trimmed_children.iter().map(deep_clone_subtree).collect();
+                    if let Some(common_indent) = compute_common_leading_indent(&trimmed_children) {
+                        adjust_leading_indent_inplace(&mut clones, &common_indent);
+                    }
+                    
+                    // Insert clones with separators before each element
+                    let mut anchor = node.clone();
+                    for child in clones.iter() {
+                        // Add separator before each non-whitespace element
+                        if !is_whitespace_text_node(child) {
+                            if let Some(sep) = &separator_opt {
+                                let sep_node = make_text_node(sep);
+                                insert_after(&anchor, &sep_node);
+                                anchor = sep_node;
+                            }
+                        }
+                        insert_after(&anchor, child);
+                        anchor = child.clone();
+                    }
+                }
+            }
+            remove_leading_whitespace_text(node);
+            remove_node(node);
+        }
+    }
+}
+
+fn insert_after(original: &Handle, new_sibling: &Handle) {
+    let Some(parent) = original.parent.take() else {
+        return;
+    };
+    original.parent.set(Some(parent.clone()));
+
+    let Some(parent_rc) = parent.upgrade() else {
+        return;
+    };
+
+    let mut children = parent_rc.children.borrow_mut();
+    let pos = children
+        .iter()
+        .position(|c| Rc::ptr_eq(c, original))
+        .map(|i| i + 1)
+        .unwrap_or(children.len());
+
+    new_sibling.parent.set(Some(parent.clone()));
+    children.insert(pos, new_sibling.clone());
+}
+
+fn remove_node(node: &Handle) {
+    let parent_weak_opt = node.parent.take();
+    if let Some(parent_rc) = parent_weak_opt.and_then(|w| w.upgrade()) {
+        let mut children = parent_rc.children.borrow_mut();
+        if let Some(pos) = children.iter().position(|c| Rc::ptr_eq(c, node)) {
+            children.remove(pos);
+        }
+    }
+    node.parent.replace(None);
+}
+
+fn deep_clone_subtree(node: &Handle) -> Handle {
+    match &node.data {
+        NodeData::Document => {
+            let cloned = Node::new(NodeData::Document);
+            for c in node.children.borrow().iter() {
+                let cc = deep_clone_subtree(c);
+                cc.parent.replace(Some(Rc::downgrade(&cloned)));
+                cloned.children.borrow_mut().push(cc);
+            }
+            cloned
+        }
+        NodeData::Doctype {
+            name,
+            public_id,
+            system_id,
+        } => Node::new(NodeData::Doctype {
+            name: name.clone(),
+            public_id: public_id.clone(),
+            system_id: system_id.clone(),
+        }),
+        NodeData::Text { contents } => Node::new(NodeData::Text {
+            contents: RefCell::new(contents.borrow().clone()),
+        }),
+        NodeData::Comment { contents } => Node::new(NodeData::Comment {
+            contents: contents.clone(),
+        }),
+        NodeData::ProcessingInstruction { target, contents } => {
+            Node::new(NodeData::ProcessingInstruction {
+                target: target.clone(),
+                contents: contents.clone(),
+            })
+        }
+        NodeData::Element {
+            name,
+            attrs,
+            template_contents,
+            mathml_annotation_xml_integration_point,
+        } => {
+            // Clone template_contents if present
+            let cloned_template_contents = if let Some(tc) = template_contents.borrow().as_ref() {
+                let tc_clone = Node::new(NodeData::Document);
+                for tc_child in tc.children.borrow().iter() {
+                    let cloned_child = deep_clone_subtree(tc_child);
+                    cloned_child.parent.replace(Some(Rc::downgrade(&tc_clone)));
+                    tc_clone.children.borrow_mut().push(cloned_child);
+                }
+                Some(tc_clone)
+            } else {
+                None
+            };
+
+            let cloned = Node::new(NodeData::Element {
+                name: name.clone(),
+                attrs: RefCell::new(attrs.borrow().clone()),
+                template_contents: RefCell::new(cloned_template_contents),
+                mathml_annotation_xml_integration_point: *mathml_annotation_xml_integration_point,
+            });
+            for c in node.children.borrow().iter() {
+                let cc = deep_clone_subtree(c);
+                cc.parent.replace(Some(Rc::downgrade(&cloned)));
+                cloned.children.borrow_mut().push(cc);
+            }
+            cloned
+        }
+    }
+}
+
+fn compute_common_leading_indent(nodes: &[Handle]) -> Option<String> {
+    let mut common: Option<String> = None;
+    for n in nodes.iter() {
+        if let NodeData::Text { contents } = &n.data {
+            let s = contents.borrow();
+            let s_ref: &str = &s;
+            if let Some((_, rest)) = s_ref.split_once('\n') {
+                let indent: String = rest
+                    .chars()
+                    .take_while(|c| *c == ' ' || *c == '\t')
+                    .collect();
+                if indent.is_empty() {
+                    continue;
+                }
+                match &mut common {
+                    Some(c) => {
+                        let mut new_len = 0usize;
+                        for (a, b) in c.chars().zip(indent.chars()) {
+                            if a == b {
+                                new_len += 1;
+                            } else {
+                                break;
+                            }
+                        }
+                        c.truncate(new_len);
+                        if c.is_empty() {
+                            return None;
+                        }
+                    }
+                    None => common = Some(indent),
+                }
+            }
+        }
+    }
+    common
+}
+
+fn adjust_leading_indent_inplace(nodes: &mut [Handle], remove_indent: &str) {
+    if remove_indent.is_empty() {
+        return;
+    }
+    for n in nodes.iter() {
+        if let NodeData::Text { contents } = &n.data {
+            let mut s = contents.borrow().to_string();
+            if let Some(idx) = s.find('\n') {
+                let after_nl = idx + 1;
+                if s[after_nl..].starts_with(remove_indent) {
+                    s.replace_range(after_nl..after_nl + remove_indent.len(), "");
+                    *contents.borrow_mut() = html5ever::tendril::StrTendril::from_slice(&s);
+                }
+            }
+        }
+    }
+}
+
+fn leading_whitespace_text(node: &Handle) -> Option<String> {
+    let parent_weak = node.parent.take()?;
+    node.parent.set(Some(parent_weak.clone()));
+    let parent = parent_weak.upgrade()?;
+    let children = parent.children.borrow();
+    let idx = children.iter().position(|c| Rc::ptr_eq(c, node))?;
+    if idx == 0 {
+        return None;
+    }
+    let before = idx - 1;
+    if let NodeData::Text { contents } = &children[before].data {
+        let s = contents.borrow();
+        let s_ref: &str = &s;
+        if s_ref
+            .chars()
+            .all(|c| c == ' ' || c == '\t' || c == '\n' || c == '\r')
+        {
+            return Some(s_ref.to_string());
+        }
+    }
+    None
+}
+
+fn make_text_node(text: &str) -> Handle {
+    Node::new(NodeData::Text {
+        contents: RefCell::new(html5ever::tendril::StrTendril::from_slice(text)),
+    })
+}
+
+fn remove_leading_whitespace_text(node: &Handle) {
+    let Some(parent_weak) = node.parent.take() else {
+        return;
+    };
+    node.parent.set(Some(parent_weak.clone()));
+    if let Some(parent) = parent_weak.upgrade() {
+        let mut children = parent.children.borrow_mut();
+        if let Some(idx) = children.iter().position(|c| Rc::ptr_eq(c, node))
+            && idx > 0
+        {
+            let should_remove = {
+                if let NodeData::Text { contents } = &children[idx - 1].data {
+                    let s = contents.borrow();
+                    let s_ref: &str = &s;
+                    s_ref
+                        .chars()
+                        .all(|c| c == ' ' || c == '\t' || c == '\n' || c == '\r')
+                } else {
+                    false
+                }
+            };
+            if should_remove {
+                children.remove(idx - 1);
+            }
+        }
+    }
+}
+
+fn is_whitespace_text_node(node: &Handle) -> bool {
+    if let NodeData::Text { contents } = &node.data {
+        let s = contents.borrow();
+        s.chars().all(|c| c.is_whitespace())
+    } else {
+        false
+    }
+}
+
+// fn kebab_to_camel(s: &str) -> String {
+//     let mut result = String::new();
+//     let mut capitalize_next = false;
+
+//     for ch in s.chars() {
+//         if ch == '-' {
+//             capitalize_next = true;
+//         } else if capitalize_next {
+//             result.push(ch.to_ascii_uppercase());
+//             capitalize_next = false;
+//         } else {
+//             result.push(ch);
+//         }
+//     }
+
+//     result
+// }
+
+// fn camel_to_kebab(s: &str) -> String {
+//     let mut result = String::new();
+
+//     for ch in s.chars() {
+//         if ch.is_ascii_uppercase() {
+//             result.push('-');
+//             result.push(ch.to_ascii_lowercase());
+//         } else {
+//             result.push(ch);
+//         }
+//     }
+
+//     result
+// }

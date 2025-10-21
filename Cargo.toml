@@ -1,0 +1,22 @@
+[package]
+name = "prevue"
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.88"
+authors = ["morugetsm <shouu6@gmail.com>"]
+description = "A tiny HTML templating engine inspired by Vue's Template Syntax"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/morugetsm/prevue"
+homepage = "https://github.com/morugetsm/prevue"
+readme = "README.md"
+keywords = ["template", "html", "vue"]
+categories = ["template-engine"]
+
+[dependencies]
+anyhow = "1.0"
+boa_engine = { version = "0.20", features = ["deser"] }
+html5ever = "0.35.0"
+markup5ever_rcdom = "0.35.0-unofficial"
+regex = "1.12"
+serde = "1.0"
+serde_json = { version = "1.0", features = ["preserve_order"] }
