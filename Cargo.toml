@@ -4,7 +4,7 @@ version = "0.0.1"
 edition = "2024"
 rust-version = "1.88"
 authors = ["morugetsm <shouu6@gmail.com>"]
-description = "A tiny HTML templating engine inspired by Vue's Template Syntax"
+description = "An HTML templating engine using Vue's template syntax."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/morugetsm/prevue"
 homepage = "https://github.com/morugetsm/prevue"
@@ -14,7 +14,7 @@ categories = ["template-engine"]
 
 [dependencies]
 anyhow = "1.0"
-boa_engine = { version = "0.20", features = ["deser"] }
+boa_engine = { version = "0.21", features = ["deser"] }
 html5ever = "0.35.0"
 markup5ever_rcdom = "0.35.0-unofficial"
 regex = "1.12"

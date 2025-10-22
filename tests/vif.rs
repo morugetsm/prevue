@@ -7,7 +7,7 @@ fn payload() -> Value {
         "number": 9999,
         "user": {
             "label": "User",
-            "value": "morugetsm",
+            "value": "Morrison",
             "age": 28
         },
     })

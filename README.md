@@ -1,6 +1,7 @@
 # prevue
 
-A tiny HTML templating engine inspired by [Vue](https://github.com/vuejs/core)'s [Template Syntax](https://vuejs.org/guide/essentials/template-syntax). Parses HTML, evaluates inline JavaScript expressions and returns rendered HTML.
+An HTML templating engine using [Vue](https://github.com/vuejs/core)'s [template syntax](https://vuejs.org/guide/essentials/template-syntax). It parses HTML, evaluates inline JavaScript expressions, and returns rendered HTML.
+
 
 ## Installation
 
@@ -68,9 +69,11 @@ let output = render(html, data)?;
 
 **Security:** ⚠️ Expressions run in a [Boa](https://github.com/boa-dev/boa) JavaScript engine. **Never use untrusted templates or data.**
 
-**JavaScript Evaluation:** Unlike Vue which only allows expressions in `{{ }}` and `v-bind`, prevue currently allows both expressions and statements (e.g., `{{ let x = 1; x + 1 }}` → `2`). This behavior may change in future versions to match Vue's restrictions.
+**JavaScript Evaluation:** Unlike Vue which only allows expressions in `{{ }}` and `v-bind`, prevue currently allows both expressions and statements (e.g., `{{ let x = 1; x + 1 }}` → `2`). This may change in future versions to match Vue's behavior.
 
 **`this` Context:** While `this` is accessible in the JavaScript engine context, its behavior may vary due to internal optimizations, and access is restricted in the template engine context. Therefore, using `this` is not recommended.
+
+**Variable Access:** ⚠️ Accessing undefined variables will cause the entire expression evaluation to fail, rather than returning `undefined`. Always ensure variables exist in the provided data payload.
 
 
 ## API

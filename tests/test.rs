@@ -7,7 +7,7 @@ fn payload() -> Value {
         "number": 9999,
         "user": {
             "label": "User",
-            "value": "morugetsm",
+            "value": "Morrison",
             "age": 28
         },
     })
@@ -23,7 +23,8 @@ fn test_example() {
         </ul>
         <a :[attribute]="value">link</a>
     </div>
-    "#.to_string();
+    "#
+    .to_string();
 
     let data = json!({
         "user": { "name": "Alice", "age": 28 },

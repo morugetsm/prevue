@@ -1,6 +1,8 @@
 use std::sync::atomic::AtomicUsize;
 
-use boa_engine::{Context, JsResult, JsString, JsValue, Source, object::ObjectInitializer};
+use boa_engine::{
+    Context, JsResult, JsString, JsValue, JsVariant, Source, object::ObjectInitializer,
+};
 use serde::Serialize;
 
 pub struct Engine {
@@ -61,8 +63,8 @@ impl Engine {
         let mut scope = self.context.global_object();
 
         if let Some(scope_key) = self.scope_keys.last()
-            && let Ok(JsValue::Object(local)) =
-                scope.get(JsString::from(scope_key.as_str()), &mut self.context)
+            && let Ok(scope_val) = scope.get(JsString::from(scope_key.as_str()), &mut self.context)
+            && let Some(local) = scope_val.as_object()
         {
             scope = local;
         }
@@ -81,10 +83,10 @@ impl Engine {
         let evaluated = self.context.eval(Source::from_bytes(scoped.as_bytes()))?;
 
         if evaluated.equals(
-            &JsValue::Object(self.context.global_object()),
+            &JsValue::new(self.context.global_object()),
             &mut self.context,
         )? {
-            Ok(JsValue::Null)
+            Ok(JsValue::null())
         } else {
             Ok(evaluated)
         }
@@ -92,12 +94,12 @@ impl Engine {
 
     pub fn eval_str(&mut self, code: &str) -> Option<String> {
         let value = self.eval(code).ok()?;
-        match value {
-            JsValue::Null => None,
-            JsValue::Undefined => None,
-            JsValue::String(val) => Some(val.to_std_string_escaped()),
-            JsValue::Object(_) => {
-                let json = value.to_json(&mut self.context).ok()?;
+        match value.variant() {
+            JsVariant::Null => None,
+            JsVariant::Undefined => None,
+            JsVariant::String(val) => Some(val.to_std_string_escaped()),
+            JsVariant::Object(_) => {
+                let json = value.to_json(&mut self.context).ok()??;
                 Some(json.to_string())
             }
             _ => Some(value.display().to_string()),

@@ -3,7 +3,7 @@ mod engine;
 use engine::Engine;
 use std::{cell::RefCell, rc::Rc, str::FromStr, sync::LazyLock};
 
-use boa_engine::{JsString, JsValue};
+use boa_engine::{JsString, JsValue, JsVariant};
 use html5ever::{
     serialize,
     tendril::{Tendril, TendrilSink},
@@ -15,13 +15,23 @@ use serde::Serialize;
 static SYNTAX_MUSTACHE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"\{\{\s*(.*?)\s*\}\}"#).unwrap());
 static SYNTAX_FOR: LazyLock<Regex> = LazyLock::new(|| {
-    regex::Regex::new(r#"^\s*\(?\s*(?P<value>\p{XID_Start}\p{XID_Continue}*)(?:\s*,\s*(?P<key>\p{XID_Start}\p{XID_Continue}*))?(?:\s*,\s*(?P<index>\p{XID_Start}\p{XID_Continue}*))?\s*\)?\s+(?:of|in)\s+(?P<iter>\p{XID_Start}\p{XID_Continue}*(?:\.\p{XID_Start}\p{XID_Continue}*|\[\d+\]|\[['\"][^'\"]+['\"]\])*)\s*$"#).unwrap()
+    regex::Regex::new(r#"^\s*\(?\s*(?P<value>\p{XID_Start}\p{XID_Continue}*)(?:\s*,\s*(?P<key>\p{XID_Start}\p{XID_Continue}*))?(?:\s*,\s*(?P<index>\p{XID_Start}\p{XID_Continue}*))?\s*\)?\s+(?:of|in)\s+(?P<iter>.+?)\s*$"#).unwrap()
 });
 static SYNTAX_BIND_ARG: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"^(?:(?:v-bind:)|:)(?P<arg>\[[^\]]+\]|[A-Za-z_][A-Za-z0-9_\-:]*)$"#).unwrap()
 });
-static SYNTAX_BIND_OBJECT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"^v-bind$"#).unwrap());
 
+/// Renders the HTML template with the given payload.
+///
+/// # Example
+/// ```
+/// # use prevue::render;
+/// # use serde_json::json;
+///
+/// let html = r#"<div><p v-if="show">{{ text }}</p></div>"#.to_string();
+/// let data = json!({"show": true, "text": "Hello"});
+/// let rendered = render(html, data).unwrap();
+/// ```
 pub fn render(document: String, payload: impl Serialize) -> Result<String, anyhow::Error> {
     let dom = html5ever::parse_document(RcDom::default(), Default::default())
         .from_utf8()
@@ -53,10 +63,10 @@ fn traverse(handle: &Handle, engine: &mut Engine) {
                     let name_ref: &str = attr.name.local.as_ref();
 
                     // v-bind object form: v-bind
-                    if name_ref == "v-bind" && SYNTAX_BIND_OBJECT.is_match(name_ref) {
+                    if name_ref == "v-bind" {
                         let expr = attr.value.to_string();
                         if let Ok(js_val) = engine.eval(expr.as_str())
-                            && let Ok(json_val) = js_val.to_json(&mut engine.context)
+                            && let Ok(Some(json_val)) = js_val.to_json(&mut engine.context)
                             && let Some(obj) = json_val.as_object()
                         {
                             for (key, val) in obj.iter() {
@@ -96,8 +106,9 @@ fn traverse(handle: &Handle, engine: &mut Engine) {
                         }
 
                         // resolve arg (evaluate inside [] if dynamic)
-                        let mut arg = arg_raw.clone();
-                        if arg_raw.starts_with('[') && arg_raw.ends_with(']') && arg_raw.len() >= 2
+                        let arg = if arg_raw.starts_with('[')
+                            && arg_raw.ends_with(']')
+                            && arg_raw.len() >= 2
                         {
                             let inner = &arg_raw[1..arg_raw.len() - 1];
                             let Some(resolved) = engine.eval_str(inner) else {
@@ -108,8 +119,10 @@ fn traverse(handle: &Handle, engine: &mut Engine) {
                                 removals.push(i);
                                 continue;
                             }
-                            arg = resolved;
-                        }
+                            resolved
+                        } else {
+                            arg_raw
+                        };
 
                         // shorthand without value => evaluate by arg name itself
                         let value_expr = if value_expr_trim.is_empty() {
@@ -176,25 +189,23 @@ fn traverse(handle: &Handle, engine: &mut Engine) {
             }
         }
         NodeData::Text { contents } => {
-            let mut cont = contents.borrow_mut();
+            let mut content = contents.borrow_mut();
 
-            let reps: Vec<(std::ops::Range<usize>, String)> = SYNTAX_MUSTACHE
-                .captures_iter(&cont)
-                .map(|cpts| {
+            let replacements: Vec<(std::ops::Range<usize>, String)> = SYNTAX_MUSTACHE
+                .captures_iter(&content)
+                .map(|capture| {
                     (
-                        cpts.get(0).unwrap().range(),
-                        cpts.get(1).unwrap().as_str().to_owned(),
+                        capture.get(0).unwrap().range(),
+                        capture.get(1).unwrap().as_str().to_owned(),
                     )
                 })
                 .collect();
 
-            for (rng, key) in reps.into_iter().rev() {
+            for (range, key) in replacements.into_iter().rev() {
                 let evaluated = engine.eval_str(key.as_str()).unwrap_or_default();
-
-                let mut text_value = cont.to_string();
-                text_value.replace_range(rng, &evaluated);
-
-                *cont = Tendril::from_str(&text_value).unwrap();
+                let mut text_value = content.to_string();
+                text_value.replace_range(range, &evaluated);
+                *content = Tendril::from_str(&text_value).unwrap();
             }
         }
         _ => (),
@@ -211,11 +222,12 @@ fn traverse(handle: &Handle, engine: &mut Engine) {
             } => {
                 // <template>
                 if node.children.borrow().is_empty()
-                    && let Some(tc) = template_contents.take()
+                    && let Some(template_content) = template_contents.take()
                 {
-                    let tc_children: Vec<Handle> = tc.children.borrow().iter().cloned().collect();
-                    for tc_child in tc_children.iter() {
-                        let child = deep_clone_subtree(tc_child);
+                    let template_children: Vec<Handle> =
+                        template_content.children.borrow().iter().cloned().collect();
+                    for template_child in template_children.iter() {
+                        let child = deep_clone_subtree(template_child);
                         child.parent.replace(Some(Rc::downgrade(node)));
                         node.children.borrow_mut().push(child);
                     }
@@ -262,57 +274,70 @@ fn traverse(handle: &Handle, engine: &mut Engine) {
 
                     let mut anchor = node.clone();
                     let separator_opt = leading_whitespace_text(node);
-                    match engine.eval(iter_iden_opt.as_str()) {
-                        Ok(JsValue::Object(obj)) if obj.is_array() => {
+
+                    // Closure for common rendering logic (clone, traverse, insert)
+                    let mut render_iteration = |engine: &mut Engine, index: usize, total: usize| {
+                        let child = deep_clone_subtree(node);
+                        traverse(&child, engine);
+
+                        insert_after(&anchor, &child);
+                        anchor = child;
+
+                        if index + 1 < total
+                            && let Some(separator) = &separator_opt
+                        {
+                            let separator_node = make_text_node(separator);
+                            insert_after(&anchor, &separator_node);
+                            anchor = separator_node;
+                        }
+                    };
+
+                    match engine.eval(iter_iden_opt.as_str()).map(|val| val.variant()) {
+                        Ok(JsVariant::Object(obj)) if obj.is_array() => {
                             let total = obj
                                 .get(JsString::from("length"), &mut engine.context)
                                 .ok()
                                 .and_then(|v| v.to_u32(&mut engine.context).ok())
-                                .unwrap_or(0);
+                                .unwrap_or(0) as usize;
 
                             for index in 0..total {
                                 if engine.enter_scope().is_err() {
                                     continue;
                                 }
+
                                 let item = obj
                                     .get(JsString::from(index.to_string()), &mut engine.context)
                                     .unwrap_or(JsValue::undefined());
+
+                                // Array: bind (item, index) only
                                 engine.set_val(value_iden.as_str(), item);
                                 if let Some(key_iden) = key_iden_opt {
                                     engine.set_val(key_iden.as_str(), JsValue::new(index as i32));
                                 }
-                                if let Some(index_iden) = index_iden_opt {
-                                    engine.set_val(index_iden.as_str(), JsValue::new(index as i32));
-                                }
-                                let child = deep_clone_subtree(node);
-                                traverse(&child, engine);
+
+                                render_iteration(engine, index, total);
                                 engine.exit_scope();
-                                insert_after(&anchor, &child);
-                                anchor = child;
-                                if (index as usize) + 1 < (total as usize)
-                                    && let Some(sep) = &separator_opt
-                                {
-                                    let sep_node = make_text_node(sep);
-                                    insert_after(&anchor, &sep_node);
-                                    anchor = sep_node;
-                                }
                             }
                         }
-                        Ok(JsValue::Object(obj)) => {
+                        Ok(JsVariant::Object(obj)) => {
                             let keys_arr = engine
                                 .eval(format!("Object.keys(({}))", iter_iden_opt.as_str()).as_str())
                                 .ok();
-                            if let Some(JsValue::Object(keys_obj)) = keys_arr {
+                            if let Some(JsVariant::Object(keys_obj)) =
+                                keys_arr.map(|val| val.variant())
+                            {
                                 let total = keys_obj
                                     .get(JsString::from("length"), &mut engine.context)
                                     .ok()
                                     .and_then(|v| v.to_u32(&mut engine.context).ok())
-                                    .unwrap_or(0);
+                                    .unwrap_or(0)
+                                    as usize;
 
                                 for index in 0..total {
                                     if engine.enter_scope().is_err() {
                                         continue;
                                     }
+
                                     let key_val = keys_obj
                                         .get(JsString::from(index.to_string()), &mut engine.context)
                                         .unwrap_or(JsValue::undefined());
@@ -323,6 +348,7 @@ fn traverse(handle: &Handle, engine: &mut Engine) {
                                         .get(key_jsstr.clone(), &mut engine.context)
                                         .unwrap_or(JsValue::undefined());
 
+                                    // Object: bind (value, key, index)
                                     engine.set_val(value_iden.as_str(), value);
                                     if let Some(key_iden) = key_iden_opt {
                                         engine.set_val(key_iden.as_str(), JsValue::from(key_jsstr));
@@ -333,18 +359,9 @@ fn traverse(handle: &Handle, engine: &mut Engine) {
                                             JsValue::new(index as i32),
                                         );
                                     }
-                                    let child = deep_clone_subtree(node);
-                                    traverse(&child, engine);
+
+                                    render_iteration(engine, index, total);
                                     engine.exit_scope();
-                                    insert_after(&anchor, &child);
-                                    anchor = child;
-                                    if (index as usize) + 1 < (total as usize)
-                                        && let Some(sep) = &separator_opt
-                                    {
-                                        let sep_node = make_text_node(sep);
-                                        insert_after(&anchor, &sep_node);
-                                        anchor = sep_node;
-                                    }
                                 }
                             }
                         }
@@ -372,31 +389,31 @@ fn traverse(handle: &Handle, engine: &mut Engine) {
             if !snapshot_children.is_empty() {
                 // Get the leading whitespace before this template (for proper indentation)
                 let separator_opt = leading_whitespace_text(node);
-                
+
                 // Filter out all whitespace-only text nodes
                 let trimmed_children: Vec<Handle> = snapshot_children
                     .iter()
                     .filter(|child| !is_whitespace_text_node(child))
                     .cloned()
                     .collect();
-                
+
                 if !trimmed_children.is_empty() {
                     let mut clones: Vec<Handle> =
                         trimmed_children.iter().map(deep_clone_subtree).collect();
                     if let Some(common_indent) = compute_common_leading_indent(&trimmed_children) {
                         adjust_leading_indent_inplace(&mut clones, &common_indent);
                     }
-                    
+
                     // Insert clones with separators before each element
                     let mut anchor = node.clone();
                     for child in clones.iter() {
                         // Add separator before each non-whitespace element
-                        if !is_whitespace_text_node(child) {
-                            if let Some(sep) = &separator_opt {
-                                let sep_node = make_text_node(sep);
-                                insert_after(&anchor, &sep_node);
-                                anchor = sep_node;
-                            }
+                        if !is_whitespace_text_node(child)
+                            && let Some(separator) = &separator_opt
+                        {
+                            let separator_node = make_text_node(separator);
+                            insert_after(&anchor, &separator_node);
+                            anchor = separator_node;
                         }
                         insert_after(&anchor, child);
                         anchor = child.clone();
@@ -480,17 +497,20 @@ fn deep_clone_subtree(node: &Handle) -> Handle {
             mathml_annotation_xml_integration_point,
         } => {
             // Clone template_contents if present
-            let cloned_template_contents = if let Some(tc) = template_contents.borrow().as_ref() {
-                let tc_clone = Node::new(NodeData::Document);
-                for tc_child in tc.children.borrow().iter() {
-                    let cloned_child = deep_clone_subtree(tc_child);
-                    cloned_child.parent.replace(Some(Rc::downgrade(&tc_clone)));
-                    tc_clone.children.borrow_mut().push(cloned_child);
-                }
-                Some(tc_clone)
-            } else {
-                None
-            };
+            let cloned_template_contents =
+                if let Some(template_content) = template_contents.borrow().as_ref() {
+                    let template_clone = Node::new(NodeData::Document);
+                    for template_child in template_content.children.borrow().iter() {
+                        let cloned_child = deep_clone_subtree(template_child);
+                        cloned_child
+                            .parent
+                            .replace(Some(Rc::downgrade(&template_clone)));
+                        template_clone.children.borrow_mut().push(cloned_child);
+                    }
+                    Some(template_clone)
+                } else {
+                    None
+                };
 
             let cloned = Node::new(NodeData::Element {
                 name: name.clone(),
@@ -576,10 +596,7 @@ fn leading_whitespace_text(node: &Handle) -> Option<String> {
     if let NodeData::Text { contents } = &children[before].data {
         let s = contents.borrow();
         let s_ref: &str = &s;
-        if s_ref
-            .chars()
-            .all(|c| c == ' ' || c == '\t' || c == '\n' || c == '\r')
-        {
+        if s_ref.chars().all(|c| c.is_whitespace()) {
             return Some(s_ref.to_string());
         }
     }
@@ -606,9 +623,7 @@ fn remove_leading_whitespace_text(node: &Handle) {
                 if let NodeData::Text { contents } = &children[idx - 1].data {
                     let s = contents.borrow();
                     let s_ref: &str = &s;
-                    s_ref
-                        .chars()
-                        .all(|c| c == ' ' || c == '\t' || c == '\n' || c == '\r')
+                    s_ref.chars().all(|c| c.is_whitespace())
                 } else {
                     false
                 }
@@ -628,36 +643,3 @@ fn is_whitespace_text_node(node: &Handle) -> bool {
         false
     }
 }
-
-// fn kebab_to_camel(s: &str) -> String {
-//     let mut result = String::new();
-//     let mut capitalize_next = false;
-
-//     for ch in s.chars() {
-//         if ch == '-' {
-//             capitalize_next = true;
-//         } else if capitalize_next {
-//             result.push(ch.to_ascii_uppercase());
-//             capitalize_next = false;
-//         } else {
-//             result.push(ch);
-//         }
-//     }
-
-//     result
-// }
-
-// fn camel_to_kebab(s: &str) -> String {
-//     let mut result = String::new();
-
-//     for ch in s.chars() {
-//         if ch.is_ascii_uppercase() {
-//             result.push('-');
-//             result.push(ch.to_ascii_lowercase());
-//         } else {
-//             result.push(ch);
-//         }
-//     }
-
-//     result
-// }

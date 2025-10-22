@@ -7,7 +7,7 @@ fn payload() -> Value {
         "number": 9999,
         "user": {
             "label": "User",
-            "value": "morugetsm",
+            "value": "Morrison",
             "age": 28
         },
     })
@@ -62,9 +62,9 @@ fn test_object() {
 
     let expected = r#"<html><head></head><body><div>
         <p>Hello, world!</p>
-        <div>{"label":"User","value":"morugetsm","age":28}</div>
+        <div>{"label":"User","value":"Morrison","age":28}</div>
         <div>User</div>
-        <div>morugetsm</div>
+        <div>Morrison</div>
         <div>28</div>
     </div>
     </body></html>"#;
@@ -116,7 +116,7 @@ fn test_this_json() {
     let output = render(input.to_string(), payload()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
-        {"__scope_0":{"list":[1,2,3],"number":9999,"user":{"label":"User","value":"morugetsm","age":28}}}
+        {"__scope_0":{"list":[1,2,3],"number":9999,"user":{"label":"User","value":"Morrison","age":28}}}
     </div>
     </body></html>"#;
     assert_eq!(output, expected);
