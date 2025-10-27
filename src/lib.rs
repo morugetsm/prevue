@@ -21,7 +21,7 @@ static SYNTAX_BIND_ARG: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"^(?:(?:v-bind:)|:)(?P<arg>\[[^\]]+\]|[A-Za-z_][A-Za-z0-9_\-:]*)$"#).unwrap()
 });
 
-/// Renders the HTML template with the given payload.
+/// Renders the HTML template with the given data.
 ///
 /// # Example
 /// ```
@@ -32,11 +32,11 @@ static SYNTAX_BIND_ARG: LazyLock<Regex> = LazyLock::new(|| {
 /// let data = json!({"show": true, "text": "Hello"});
 /// let rendered = render(html, data).unwrap();
 /// ```
-pub fn render(document: String, payload: impl Serialize) -> Result<String, anyhow::Error> {
+pub fn render(html: String, data: impl Serialize) -> Result<String, anyhow::Error> {
     let dom = html5ever::parse_document(RcDom::default(), Default::default())
         .from_utf8()
-        .read_from(&mut document.as_bytes())?;
-    let mut engine = engine::Engine::new(payload);
+        .read_from(&mut html.as_bytes())?;
+    let mut engine = engine::Engine::new(data);
 
     traverse(&dom.document.clone(), &mut engine);
 
@@ -44,8 +44,8 @@ pub fn render(document: String, payload: impl Serialize) -> Result<String, anyho
     let document: SerializableHandle = dom.document.clone().into();
     serialize(&mut buff, &document, Default::default())?;
 
-    let html = String::from_utf8(buff)?;
-    Ok(html)
+    let rendered = String::from_utf8(buff)?;
+    Ok(rendered)
 }
 
 fn traverse(handle: &Handle, engine: &mut Engine) {
@@ -234,29 +234,16 @@ fn traverse(handle: &Handle, engine: &mut Engine) {
                 }
 
                 // v-if
-                let attr_idx = attrs
-                    .borrow()
-                    .iter()
-                    .position(|attr| &attr.name.local == "v-if");
-                if let Some(idx) = attr_idx {
-                    let attr_if = attrs.borrow_mut().remove(idx);
-                    let attr_value = attr_if.value.to_string();
-                    if !engine.eval_bool(&attr_value).unwrap_or(false) {
-                        remove_leading_whitespace_text(node);
-                        remove_node(node);
-                        continue;
-                    }
+                if let Some(attr_value) = find_and_remove_directive(attrs, "v-if")
+                    && !engine.eval_bool(&attr_value).unwrap_or(false)
+                {
+                    remove_leading_whitespace_text(node);
+                    remove_node(node);
+                    continue;
                 }
 
                 // v-for
-                let attr_idx = attrs
-                    .borrow()
-                    .iter()
-                    .position(|attr| &attr.name.local == "v-for");
-                if let Some(idx) = attr_idx {
-                    let attr_for = attrs.borrow_mut().remove(idx);
-                    let attr_value = attr_for.value.to_string();
-
+                if let Some(attr_value) = find_and_remove_directive(attrs, "v-for") {
                     let Some(syntax) = SYNTAX_FOR.captures(attr_value.as_str()) else {
                         remove_node(node);
                         continue;
@@ -273,7 +260,9 @@ fn traverse(handle: &Handle, engine: &mut Engine) {
                     };
 
                     let mut anchor = node.clone();
-                    let separator_opt = leading_whitespace_text(node);
+                    // Extract only the whitespace after the last newline for repetition
+                    let separator_opt = leading_whitespace_text(node)
+                        .and_then(|ws| ws.rfind('\n').map(|idx| ws[idx..].to_string()));
 
                     // Closure for common rendering logic (clone, traverse, insert)
                     let mut render_iteration = |engine: &mut Engine, index: usize, total: usize| {
@@ -426,6 +415,18 @@ fn traverse(handle: &Handle, engine: &mut Engine) {
     }
 }
 
+fn find_and_remove_directive(
+    attrs: &RefCell<Vec<html5ever::Attribute>>,
+    directive: &str,
+) -> Option<String> {
+    let attr_idx = attrs
+        .borrow()
+        .iter()
+        .position(|attr| &attr.name.local == directive)?;
+    let attr = attrs.borrow_mut().remove(attr_idx);
+    Some(attr.value.to_string())
+}
+
 fn insert_after(original: &Handle, new_sibling: &Handle) {
     let Some(parent) = original.parent.take() else {
         return;
@@ -459,14 +460,18 @@ fn remove_node(node: &Handle) {
 }
 
 fn deep_clone_subtree(node: &Handle) -> Handle {
+    let clone_children = |source: &Handle, parent: &Handle| {
+        for child in source.children.borrow().iter() {
+            let cloned_child = deep_clone_subtree(child);
+            cloned_child.parent.replace(Some(Rc::downgrade(parent)));
+            parent.children.borrow_mut().push(cloned_child);
+        }
+    };
+
     match &node.data {
         NodeData::Document => {
             let cloned = Node::new(NodeData::Document);
-            for c in node.children.borrow().iter() {
-                let cc = deep_clone_subtree(c);
-                cc.parent.replace(Some(Rc::downgrade(&cloned)));
-                cloned.children.borrow_mut().push(cc);
-            }
+            clone_children(node, &cloned);
             cloned
         }
         NodeData::Doctype {
@@ -500,13 +505,7 @@ fn deep_clone_subtree(node: &Handle) -> Handle {
             let cloned_template_contents =
                 if let Some(template_content) = template_contents.borrow().as_ref() {
                     let template_clone = Node::new(NodeData::Document);
-                    for template_child in template_content.children.borrow().iter() {
-                        let cloned_child = deep_clone_subtree(template_child);
-                        cloned_child
-                            .parent
-                            .replace(Some(Rc::downgrade(&template_clone)));
-                        template_clone.children.borrow_mut().push(cloned_child);
-                    }
+                    clone_children(template_content, &template_clone);
                     Some(template_clone)
                 } else {
                     None
@@ -518,11 +517,7 @@ fn deep_clone_subtree(node: &Handle) -> Handle {
                 template_contents: RefCell::new(cloned_template_contents),
                 mathml_annotation_xml_integration_point: *mathml_annotation_xml_integration_point,
             });
-            for c in node.children.borrow().iter() {
-                let cc = deep_clone_subtree(c);
-                cc.parent.replace(Some(Rc::downgrade(&cloned)));
-                cloned.children.borrow_mut().push(cc);
-            }
+            clone_children(node, &cloned);
             cloned
         }
     }
@@ -533,8 +528,7 @@ fn compute_common_leading_indent(nodes: &[Handle]) -> Option<String> {
     for n in nodes.iter() {
         if let NodeData::Text { contents } = &n.data {
             let s = contents.borrow();
-            let s_ref: &str = &s;
-            if let Some((_, rest)) = s_ref.split_once('\n') {
+            if let Some((_, rest)) = s.split_once('\n') {
                 let indent: String = rest
                     .chars()
                     .take_while(|c| *c == ' ' || *c == '\t')
@@ -593,12 +587,10 @@ fn leading_whitespace_text(node: &Handle) -> Option<String> {
         return None;
     }
     let before = idx - 1;
-    if let NodeData::Text { contents } = &children[before].data {
-        let s = contents.borrow();
-        let s_ref: &str = &s;
-        if s_ref.chars().all(|c| c.is_whitespace()) {
-            return Some(s_ref.to_string());
-        }
+    if is_whitespace_text_node(&children[before])
+        && let NodeData::Text { contents } = &children[before].data
+    {
+        return Some(contents.borrow().to_string());
     }
     None
 }
@@ -618,19 +610,9 @@ fn remove_leading_whitespace_text(node: &Handle) {
         let mut children = parent.children.borrow_mut();
         if let Some(idx) = children.iter().position(|c| Rc::ptr_eq(c, node))
             && idx > 0
+            && is_whitespace_text_node(&children[idx - 1])
         {
-            let should_remove = {
-                if let NodeData::Text { contents } = &children[idx - 1].data {
-                    let s = contents.borrow();
-                    let s_ref: &str = &s;
-                    s_ref.chars().all(|c| c.is_whitespace())
-                } else {
-                    false
-                }
-            };
-            if should_remove {
-                children.remove(idx - 1);
-            }
+            children.remove(idx - 1);
         }
     }
 }

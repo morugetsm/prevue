@@ -1,7 +1,7 @@
 use prevue::render;
 use serde_json::{Value, json};
 
-fn payload() -> Value {
+fn data() -> Value {
     json!({
         "list": [1, 2, 3],
         "number": 9999,
@@ -20,7 +20,7 @@ fn test_eval() {
         {{ 1 + 1 }}
     </div>
     "#;
-    let output = render(input.to_string(), payload()).unwrap();
+    let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         2
@@ -37,7 +37,7 @@ fn test_array() {
         <div>{{ list }}</div>
     </div>
     "#;
-    let output = render(input.to_string(), payload()).unwrap();
+    let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <p>Hello, world!</p>
@@ -58,7 +58,7 @@ fn test_object() {
         <div>{{ user.age }}</div>
     </div>
     "#;
-    let output = render(input.to_string(), payload()).unwrap();
+    let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <p>Hello, world!</p>
@@ -79,7 +79,7 @@ fn test_statement() {
         {{ let exist = true; exist }}
     </div>
     "#;
-    let output = render(input.to_string(), payload()).unwrap();
+    let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         true
@@ -96,7 +96,7 @@ fn test_this() {
         {{ this }}
     </div>
     "#;
-    let output = render(input.to_string(), payload()).unwrap();
+    let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         
@@ -113,7 +113,7 @@ fn test_this_json() {
         {{ JSON.stringify(this) }}
     </div>
     "#;
-    let output = render(input.to_string(), payload()).unwrap();
+    let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         {"__scope_0":{"list":[1,2,3],"number":9999,"user":{"label":"User","value":"Morrison","age":28}}}
@@ -130,7 +130,7 @@ fn test_isolation() {
         <h2>{{ x }}</h2>
     </div>
     "#;
-    let output = render(input.to_string(), payload()).unwrap();
+    let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <h1>1</h1>

@@ -1,7 +1,7 @@
 use prevue::render;
 use serde_json::{Value, json};
 
-fn payload() -> Value {
+fn data() -> Value {
     json!({
         "list": [1, 2, 3],
         "number": 9999,
@@ -51,7 +51,7 @@ fn test_example() {
 #[test]
 fn test_html5ever() {
     let input = "";
-    let output = render(input.to_string(), payload()).unwrap();
+    let output = render(input.to_string(), data()).unwrap();
 
     let expected = "<html><head></head><body></body></html>";
     assert_eq!(output, expected);
@@ -64,7 +64,7 @@ fn test_attr_case() {
         <h1 TTT></h1>
     </div>
     "#;
-    let output = render(input.to_string(), payload()).unwrap();
+    let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <h1 ttt=""></h1>

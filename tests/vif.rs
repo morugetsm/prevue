@@ -1,7 +1,7 @@
 use prevue::render;
 use serde_json::{Value, json};
 
-fn payload() -> Value {
+fn data() -> Value {
     json!({
         "list": [1, 2, 3],
         "number": 9999,
@@ -23,7 +23,7 @@ fn test_if() {
         <div v-if="list">LIST</div>
     </div>
     "#;
-    let output = render(input.to_string(), payload()).unwrap();
+    let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <p>Hello, world!</p>
@@ -42,7 +42,7 @@ fn test_if_cast() {
         <div v-if="list">array is true</div>
     </div>
     "#;
-    let output = render(input.to_string(), payload()).unwrap();
+    let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>array is true</div>
@@ -63,7 +63,7 @@ fn test_if_safety() {
         <div v-if="notexist">notexist</div>
     </div>
     "#;
-    let output = render(input.to_string(), payload()).unwrap();
+    let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>Infinity</div>

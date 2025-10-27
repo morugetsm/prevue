@@ -1,7 +1,7 @@
 use prevue::render;
 use serde_json::{Value, json};
 
-fn payload() -> Value {
+fn data() -> Value {
     json!({
         "id": "id-value",
         "value": 333,
@@ -25,7 +25,7 @@ fn test_bind() {
         <h2 :value="value">h2 elem</h2>
     </div>
     "#;
-    let output = render(input.to_string(), payload()).unwrap();
+    let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <h1 id="id-value">h1 elem</h1>
@@ -43,7 +43,7 @@ fn test_bind_shorthand() {
         <h2 :value>foo</h2>
     </div>
     "#;
-    let output = render(input.to_string(), payload()).unwrap();
+    let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <h1 id="id-value">h1 elem</h1>
@@ -61,7 +61,7 @@ fn test_bind_dynamic() {
         <h2 :[value]="value">h2 elem</h2>
     </div>
     "#;
-    let output = render(input.to_string(), payload()).unwrap();
+    let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <h1 id-value="id-value">h1 elem</h1>
@@ -80,7 +80,7 @@ fn test_bind_dynamic_shorthand() {
         <h2 :[value]>h2 elem</h2>
     </div>
     "#;
-    let output = render(input.to_string(), payload()).unwrap();
+    let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <h1>h1 elem</h1>
@@ -98,7 +98,7 @@ fn test_bind_eval() {
         <h2 :calc="value * 2">h2 elem</h2>
     </div>
     "#;
-    let output = render(input.to_string(), payload()).unwrap();
+    let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <h1 format="hello id-value">h1 elem</h1>
@@ -117,7 +117,7 @@ fn test_bind_statement() {
         <h2 :calc="let y = 2; y * 2">h2 elem</h2>
     </div>
     "#;
-    let output = render(input.to_string(), payload()).unwrap();
+    let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <h1 format="2">h1 elem</h1>
@@ -135,7 +135,7 @@ fn test_bind_nullish() {
         <h2 :bar="undefined">h2 elem</h2>
     </div>
     "#;
-    let output = render(input.to_string(), payload()).unwrap();
+    let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <h1>h1 elem</h1>
@@ -152,7 +152,7 @@ fn test_bind_object() {
         <span v-bind="attrs"></span>
     </div>
     "#;
-    let output = render(input.to_string(), payload()).unwrap();
+    let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <span str="hello" num="123" truthy="true" falsy="false"></span>
@@ -172,7 +172,7 @@ fn test_attr_case_dynamic() {
         <h5 :[dynamic-key]="value">link</h5>
     </div>
     "#;
-    let output = render(input.to_string(), payload()).unwrap();
+    let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <h1>data-id</h1>

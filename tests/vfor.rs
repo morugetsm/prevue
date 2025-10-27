@@ -1,7 +1,7 @@
 use prevue::render;
 use serde_json::{Value, json};
 
-fn payload() -> Value {
+fn data() -> Value {
     json!({
         "list": [1, 2, 3],
         "number": 9999,
@@ -30,7 +30,7 @@ fn test_for_array() {
         <h4>{{ item }}</h4>
     </div>
     "#;
-    let output = render(input.to_string(), payload()).unwrap();
+    let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <h1>{{ notclosed }</h1>
@@ -51,7 +51,7 @@ fn test_for_array_literal() {
         <div v-for="item, index in [10, 20, 30]">{{ `${index}: ${item}` }}</div>
     </div>
     "#;
-    let output = render(input.to_string(), payload()).unwrap();
+    let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>0: 10</div>
@@ -73,7 +73,7 @@ fn test_for_array_with_third() {
         </div>
     </div>
     "#;
-    let output = render(input.to_string(), payload()).unwrap();
+    let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>
@@ -107,7 +107,7 @@ fn test_for_nested() {
         </div>
     </div>
     "#;
-    let output = render(input.to_string(), payload()).unwrap();
+    let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>
@@ -143,7 +143,7 @@ fn test_for_object() {
         <h1 v-for="value, key in user">{{ `${key}: ${value}` }}</h1>
     </div>
     "#;
-    let output = render(input.to_string(), payload()).unwrap();
+    let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <h1>label: User</h1>
@@ -165,7 +165,7 @@ fn test_for_object_with_index() {
         </div>
     </div>
     "#;
-    let output = render(input.to_string(), payload()).unwrap();
+    let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>
@@ -200,7 +200,7 @@ fn test_for_complex() {
         </template>
     </div>
     "#;
-    let output = render(input.to_string(), payload()).unwrap();
+    let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <h1>0: [object Object]</h1>
@@ -221,7 +221,7 @@ fn test_for_function_call() {
         <div v-for="key in Object.keys(user)">{{ key }}</div>
     </div>
     "#;
-    let output = render(input.to_string(), payload()).unwrap();
+    let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>label</div>
@@ -239,7 +239,7 @@ fn test_for_method_chaining() {
         <div v-for="item in list.filter(x => x > 1).map(x => x * 2)">{{ item }}</div>
     </div>
     "#;
-    let output = render(input.to_string(), payload()).unwrap();
+    let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>4</div>
@@ -256,9 +256,49 @@ fn test_for_expression() {
         <div v-for="n in Array(3).fill(0).map((_, i) => i + 1)">{{ n }}</div>
     </div>
     "#;
-    let output = render(input.to_string(), payload()).unwrap();
+    let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
+        <div>1</div>
+        <div>2</div>
+        <div>3</div>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_for_with_comment() {
+    let input = r#"
+    <div>
+        <!-- comment --><div v-for="item in list">a{{ item }}</div>
+        <div v-for="item in list">b{{ item }}</div>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <!-- comment --><div>a1</div><div>a2</div><div>a3</div>
+        <div>b1</div>
+        <div>b2</div>
+        <div>b3</div>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_for_with_empty_line() {
+    let input = r#"
+    <div>
+        
+        <div v-for="item in list">{{ item }}</div>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        
         <div>1</div>
         <div>2</div>
         <div>3</div>

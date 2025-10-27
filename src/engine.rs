@@ -12,7 +12,7 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub fn new(payload: impl Serialize) -> Self {
+    pub fn new(data: impl Serialize) -> Self {
         let mut engine = Self {
             context: Context::default(),
             scope_keys: Default::default(),
@@ -21,7 +21,7 @@ impl Engine {
 
         engine.enter_scope().unwrap();
 
-        let json = serde_json::to_value(payload).unwrap();
+        let json = serde_json::to_value(data).unwrap();
         if let Some(obj) = json.as_object() {
             for (key, value) in obj.iter() {
                 if let Ok(val) = JsValue::from_json(value, &mut engine.context) {

@@ -10,6 +10,14 @@ An HTML templating engine using [Vue](https://github.com/vuejs/core)'s [template
 prevue = "0.0.1"
 ```
 
+
+## API
+
+```rust
+pub fn render(html: String, data: impl Serialize) -> Result<String, anyhow::Error>
+```
+
+
 ## Example
 
 ```rust
@@ -33,7 +41,7 @@ let data = json!({
     "value": 123,
 });
 
-let output = render(html, data)?;
+let output = render(html, data).unwrap();
 
 // <html><head></head><body><div>
 //         <p>James is adult</p>
@@ -47,41 +55,40 @@ let output = render(html, data)?;
 //     </body></html>
 ```
 
+
 ## Features
 
 | Syntax | Status | Notes |
 |---|---|---|
-| `{{ }}` | 🟡 | Array and Object outputs don’t include whitespace. |
+| `{{ }}` | 🟡 | Array/Object stringify without spacing (e.g., `[1,2,3]` not `[ 1, 2, 3 ]`) |
 | `<template>` | ✅ |  |
-| `v-text`, `v-html` | ❌ | Planned |
+| `v-bind`, `:attr` | 🟡 | No class/style object binding |
 | `v-if` | ✅ |  |
 | `v-else`, `v-else-if` | ❌ |  |
 | `v-for` | 🟡 | Array and Object only |
-| `v-bind`, `:attr` | 🟡 | No class/style object binding |
+| `v-text`, `v-html` | ❌ | Planned |
 | `v-pre` | ❌ |  |
+
 
 ## Important Notes
 
-**HTML5 Parsing:** This library uses [html5ever](https://github.com/servo/html5ever), which follows HTML5 spec strictly:
+### HTML5 Parsing
+
+This library uses [html5ever](https://github.com/servo/html5ever), which follows HTML5 spec strictly:
 - Attribute names are **lowercased** (e.g., `:MyAttr` → `:myattr`)
 - Dynamic bindings are **lowercased**: `:[dynamicKey]` looks up `dynamickey` variable
 - Outputs complete HTML document with `<html>`, `<head>`, `<body>` tags
 
-**Security:** ⚠️ Expressions run in a [Boa](https://github.com/boa-dev/boa) JavaScript engine. **Never use untrusted templates or data.**
+### JavaScript Evaluation
 
-**JavaScript Evaluation:** Unlike Vue which only allows expressions in `{{ }}` and `v-bind`, prevue currently allows both expressions and statements (e.g., `{{ let x = 1; x + 1 }}` → `2`). This may change in future versions to match Vue's behavior.
+This library uses a [Boa](https://github.com/boa-dev/boa) JavaScript engine to evaluate expressions.
 
-**`this` Context:** While `this` is accessible in the JavaScript engine context, its behavior may vary due to internal optimizations, and access is restricted in the template engine context. Therefore, using `this` is not recommended.
+- ⚠️ **Security:** Never use untrusted templates or data
+- **Evaluation Behavior:** Unlike Vue which restricts each binding to a single expression, prevue currently allows both expressions and statements in all binding contexts (e.g., `{{ let x = 1; x + 1 }}` → `2`). This may change in future versions to match Vue's behavior
+- **Variable Access:** ⚠️ Accessing undefined variables will cause the entire expression evaluation to fail, rather than returning `undefined`. Always ensure that variables exist in the provided data
+- **`this` Context:** While `this` is accessible in the JavaScript engine context, its behavior may vary due to internal optimizations, and access is restricted in the template engine context. Therefore, using `this` is not recommended
 
-**Variable Access:** ⚠️ Accessing undefined variables will cause the entire expression evaluation to fail, rather than returning `undefined`. Always ensure variables exist in the provided data payload.
-
-
-## API
-
-```rust
-pub fn render(document: String, payload: impl Serialize) -> Result<String, anyhow::Error>
-```
 
 ## License
 
-MIT OR Apache-2.0
+MIT
