@@ -1,13 +1,13 @@
 # prevue
 
-An HTML templating engine using [Vue](https://github.com/vuejs/core)'s [template syntax](https://vuejs.org/guide/essentials/template-syntax). It parses HTML, evaluates inline JavaScript expressions, and returns rendered HTML.
+An HTML templating engine that uses [Vue](https://github.com/vuejs/core)'s [template syntax](https://vuejs.org/guide/essentials/template-syntax). Parses HTML, evaluates inline JavaScript expressions, and returns rendered output.
 
 
 ## Installation
 
 ```toml
 [dependencies]
-prevue = "0.0.1"
+prevue = "0.0.2"
 ```
 
 
@@ -25,32 +25,30 @@ use prevue::render;
 use serde_json::json;
 
 let html = r#"
-<div>
-    <p v-if="user.age >= 18">{{ user.name }} is adult</p>
-    <ul>
-        <li v-for="item in list">{{ item }}</li>
-    </ul>
-    <a :[attribute]="value">link</a>
-</div>
+    <div>
+        <a :id="id">link</a>
+        <p v-if="user.age >= 18">{{ user.name }} is adult</p>
+        <ul>
+            <li v-for="item in list">{{ item }}</li>
+        </ul>
+    </div>
 "#.to_string();
 
 let data = json!({
+    "id": "link-id",
     "user": { "name": "James", "age": 28 },
     "list": ["a", "b", "c"],
-    "attribute": "link-id",
-    "value": 123,
 });
 
 let output = render(html, data).unwrap();
-
 // <html><head></head><body><div>
+//         <a id="link-id">link</a>
 //         <p>James is adult</p>
 //         <ul>
 //             <li>a</li>
 //             <li>b</li>
 //             <li>c</li>
 //         </ul>
-//         <a link-id="123">link</a>
 //     </div>
 //     </body></html>
 ```
@@ -64,9 +62,10 @@ let output = render(html, data).unwrap();
 | `<template>` | ✅ |  |
 | `v-bind`, `:attr` | 🟡 | No class/style object binding |
 | `v-if` | ✅ |  |
-| `v-else`, `v-else-if` | ❌ |  |
+| `v-else` | ✅ |  |
+| `v-else-if` | ✅ |  |
 | `v-for` | 🟡 | Array and Object only |
-| `v-text`, `v-html` | ❌ | Planned |
+| `v-text`, `v-html` | ❌ |  |
 | `v-pre` | ❌ |  |
 
 
@@ -83,10 +82,10 @@ This library uses [html5ever](https://github.com/servo/html5ever), which follows
 
 This library uses a [Boa](https://github.com/boa-dev/boa) JavaScript engine to evaluate expressions.
 
-- ⚠️ **Security:** Never use untrusted templates or data
-- **Evaluation Behavior:** Unlike Vue which restricts each binding to a single expression, prevue currently allows both expressions and statements in all binding contexts (e.g., `{{ let x = 1; x + 1 }}` → `2`). This may change in future versions to match Vue's behavior
-- **Variable Access:** ⚠️ Accessing undefined variables will cause the entire expression evaluation to fail, rather than returning `undefined`. Always ensure that variables exist in the provided data
-- **`this` Context:** While `this` is accessible in the JavaScript engine context, its behavior may vary due to internal optimizations, and access is restricted in the template engine context. Therefore, using `this` is not recommended
+- ⚠️ **Security:** Never use untrusted templates or data.
+- **Evaluation Behavior:** Unlike Vue, which restricts each binding to a single expression, prevue currently allows both expressions and statements in all binding contexts (e.g., `{{ let x = 1; x + 1 }}` → `2`). This may change in future versions to match Vue's behavior.
+- **Variable Access:** Accessing undefined variables will cause the entire expression evaluation to fail, rather than returning `undefined`. Always ensure that variables exist in the provided data.
+- **`this` Context:** While `this` is accessible in the JavaScript engine context, its behavior may vary due to internal optimizations, and access is restricted in the template engine context. Therefore, using `this` is not recommended.
 
 
 ## License

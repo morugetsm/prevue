@@ -288,7 +288,7 @@ fn test_for_with_comment() {
 }
 
 #[test]
-fn test_for_with_empty_line() {
+fn test_for_with_leading_empty_line() {
     let input = r#"
     <div>
         
@@ -300,6 +300,92 @@ fn test_for_with_empty_line() {
     let expected = r#"<html><head></head><body><div>
         
         <div>1</div>
+        <div>2</div>
+        <div>3</div>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_for_with_trailing_empty_line() {
+    let input = r#"
+    <div>
+        <div v-for="item in list">{{ item }}</div>
+        
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <div>1</div>
+        <div>2</div>
+        <div>3</div>
+        
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_for_empty() {
+    let input = r#"
+    <div>
+        <div v-for="item in []">{{ item }}</div>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_for_wrong() {
+    let input = r#"
+    <div>
+        <div v-for="Hello, world!">Hello, world!</div>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_for_with_leading_whitespace() {
+    let input = r#"
+    <div> hi
+        <div v-for="item in list">{{ item }}</div>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div> hi
+        <div>1</div>
+        <div>2</div>
+        <div>3</div>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_for_with_leading_polluted() {
+    let input = r#"
+    <div> hi
+    hi  <div v-for="item in list">{{ item }}</div>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div> hi
+    hi  <div>1</div>
         <div>2</div>
         <div>3</div>
     </div>

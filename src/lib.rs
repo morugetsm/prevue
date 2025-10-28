@@ -57,58 +57,55 @@ fn traverse(handle: &Handle, engine: &mut Engine) {
             let mut removals: Vec<usize> = Vec::new();
             let mut additions: Vec<(String, html5ever::QualName, String)> = Vec::new();
 
-            {
-                let attrs_ro = attrs.borrow();
-                for (i, attr) in attrs_ro.iter().enumerate() {
-                    let name_ref: &str = attr.name.local.as_ref();
+            for (i, attr) in attrs.borrow().iter().enumerate() {
+                let name_ref: &str = attr.name.local.as_ref();
 
-                    // v-bind object form: v-bind
-                    if name_ref == "v-bind" {
-                        let expr = attr.value.to_string();
-                        if let Ok(js_val) = engine.eval(expr.as_str())
-                            && let Ok(Some(json_val)) = js_val.to_json(&mut engine.context)
-                            && let Some(obj) = json_val.as_object()
-                        {
-                            for (key, val) in obj.iter() {
-                                // skip null
-                                if val.is_null() {
-                                    continue;
-                                }
-                                let value_str = if val.is_string() {
-                                    val.as_str().unwrap_or("").to_string()
-                                } else {
-                                    val.to_string()
-                                };
-                                additions.push((key.clone(), attr.name.clone(), value_str));
+                // v-bind object form: v-bind
+                if name_ref == "v-bind" {
+                    let expr = attr.value.to_string();
+                    if let Ok(js_val) = engine.eval(expr.as_str())
+                        && let Ok(Some(json_val)) = js_val.to_json(&mut engine.context)
+                        && let Some(obj) = json_val.as_object()
+                    {
+                        for (key, val) in obj.iter() {
+                            // skip null
+                            if val.is_null() {
+                                continue;
                             }
-                            removals.push(i);
+                            let value_str = if val.is_string() {
+                                val.as_str().unwrap_or("").to_string()
+                            } else {
+                                val.to_string()
+                            };
+                            additions.push((key.clone(), attr.name.clone(), value_str));
                         }
+                        removals.push(i);
+                    }
+                    continue;
+                }
+
+                // v-bind with arg: :attr or v-bind:attr
+                if let Some(caps) = SYNTAX_BIND_ARG.captures(name_ref) {
+                    let arg_raw = caps
+                        .name("arg")
+                        .map(|m| m.as_str().to_string())
+                        .unwrap_or_default();
+
+                    let value_expr_raw = attr.value.to_string();
+                    let value_expr_trim = value_expr_raw.trim();
+
+                    // dynamic arg shorthand without value => not supported, drop the attribute
+                    if arg_raw.starts_with('[')
+                        && arg_raw.ends_with(']')
+                        && value_expr_trim.is_empty()
+                    {
+                        removals.push(i);
                         continue;
                     }
 
-                    // v-bind with arg: :attr or v-bind:attr
-                    if let Some(caps) = SYNTAX_BIND_ARG.captures(name_ref) {
-                        let arg_raw = caps
-                            .name("arg")
-                            .map(|m| m.as_str().to_string())
-                            .unwrap_or_default();
-
-                        let value_expr_raw = attr.value.to_string();
-                        let value_expr_trim = value_expr_raw.trim();
-
-                        // dynamic arg shorthand without value => not supported, drop the attribute
-                        if arg_raw.starts_with('[')
-                            && arg_raw.ends_with(']')
-                            && value_expr_trim.is_empty()
-                        {
-                            removals.push(i);
-                            continue;
-                        }
-
-                        // resolve arg (evaluate inside [] if dynamic)
-                        let arg = if arg_raw.starts_with('[')
-                            && arg_raw.ends_with(']')
-                            && arg_raw.len() >= 2
+                    // resolve arg (evaluate inside [] if dynamic)
+                    let arg =
+                        if arg_raw.starts_with('[') && arg_raw.ends_with(']') && arg_raw.len() >= 2
                         {
                             let inner = &arg_raw[1..arg_raw.len() - 1];
                             let Some(resolved) = engine.eval_str(inner) else {
@@ -124,23 +121,22 @@ fn traverse(handle: &Handle, engine: &mut Engine) {
                             arg_raw
                         };
 
-                        // shorthand without value => evaluate by arg name itself
-                        let value_expr = if value_expr_trim.is_empty() {
-                            arg.clone()
-                        } else {
-                            value_expr_raw
-                        };
+                    // shorthand without value => evaluate by arg name itself
+                    let value_expr = if value_expr_trim.is_empty() {
+                        arg.clone()
+                    } else {
+                        value_expr_raw
+                    };
 
-                        // evaluate value using eval_str-only; drop on nullish markers
-                        if let Some(value_str) = engine.eval_str(value_expr.as_str()) {
-                            // Plan to rename this attribute in-place and set its value
-                            renames.push((i, arg, value_str));
-                        } else {
-                            // evaluation failed: drop attribute for safety
-                            removals.push(i);
-                        }
-                        continue;
+                    // evaluate value using eval_str-only; drop on nullish markers
+                    if let Some(value_str) = engine.eval_str(value_expr.as_str()) {
+                        // Plan to rename this attribute in-place and set its value
+                        renames.push((i, arg, value_str));
+                    } else {
+                        // evaluation failed: drop attribute for safety
+                        removals.push(i);
                     }
+                    continue;
                 }
             }
 
@@ -213,6 +209,9 @@ fn traverse(handle: &Handle, engine: &mut Engine) {
 
     let snapshot: Vec<Handle> = handle.children.borrow().iter().cloned().collect();
 
+    let mut in_if_chain = false;
+    let mut if_chain_hit = false;
+
     for node in snapshot.iter() {
         match &node.data {
             NodeData::Element {
@@ -234,13 +233,56 @@ fn traverse(handle: &Handle, engine: &mut Engine) {
                 }
 
                 // v-if
-                if let Some(attr_value) = find_and_remove_directive(attrs, "v-if")
-                    && !engine.eval_bool(&attr_value).unwrap_or(false)
-                {
-                    remove_leading_whitespace_text(node);
-                    remove_node(node);
+                if let Some(attr_value) = find_and_remove_directive(attrs, "v-if") {
+                    in_if_chain = true;
+
+                    match engine.eval_bool(&attr_value).unwrap_or(false) {
+                        true => {
+                            if_chain_hit = true;
+                            traverse(node, engine);
+                        }
+                        false => {
+                            if_chain_hit = false;
+                            remove_node(node);
+                        }
+                    }
                     continue;
                 }
+
+                if let Some(attr_value) = find_and_remove_directive(attrs, "v-else-if")
+                    && in_if_chain
+                {
+                    if if_chain_hit {
+                        remove_node(node);
+                        continue;
+                    }
+
+                    match engine.eval_bool(&attr_value).unwrap_or(false) {
+                        true => {
+                            if_chain_hit = true;
+                            traverse(node, engine);
+                        }
+                        false => {
+                            if_chain_hit = false;
+                            remove_node(node);
+                        }
+                    }
+                    continue;
+                }
+
+                if let Some(_attr_value) = find_and_remove_directive(attrs, "v-else")
+                    && in_if_chain
+                {
+                    if if_chain_hit {
+                        remove_node(node);
+                        continue;
+                    }
+                    if_chain_hit = true;
+                    traverse(node, engine);
+                    continue;
+                }
+
+                in_if_chain = false;
 
                 // v-for
                 if let Some(attr_value) = find_and_remove_directive(attrs, "v-for") {
@@ -260,25 +302,29 @@ fn traverse(handle: &Handle, engine: &mut Engine) {
                     };
 
                     let mut anchor = node.clone();
-                    // Extract only the whitespace after the last newline for repetition
-                    let separator_opt = leading_whitespace_text(node)
-                        .and_then(|ws| ws.rfind('\n').map(|idx| ws[idx..].to_string()));
+                    // Get trailing whitespace (after last newline) for v-for repetition
+                    let separator_first = leading_first(node);
+                    let separator_whitespace = leading_whitespace(node);
 
                     // Closure for common rendering logic (clone, traverse, insert)
-                    let mut render_iteration = |engine: &mut Engine, index: usize, total: usize| {
+                    let mut render_iteration = |engine: &mut Engine, index: usize| {
+                        let separator_here = if index == 0 {
+                            &separator_first
+                        } else {
+                            &separator_whitespace
+                        };
+                        // Add separator before each iteration (indentation from last newline)
+                        if let Some(separator) = separator_here {
+                            let separator_node = make_text_node(separator);
+                            insert_after(&anchor, &separator_node);
+                            anchor = separator_node;
+                        }
+
                         let child = deep_clone_subtree(node);
                         traverse(&child, engine);
 
                         insert_after(&anchor, &child);
                         anchor = child;
-
-                        if index + 1 < total
-                            && let Some(separator) = &separator_opt
-                        {
-                            let separator_node = make_text_node(separator);
-                            insert_after(&anchor, &separator_node);
-                            anchor = separator_node;
-                        }
                     };
 
                     match engine.eval(iter_iden_opt.as_str()).map(|val| val.variant()) {
@@ -304,7 +350,7 @@ fn traverse(handle: &Handle, engine: &mut Engine) {
                                     engine.set_val(key_iden.as_str(), JsValue::new(index as i32));
                                 }
 
-                                render_iteration(engine, index, total);
+                                render_iteration(engine, index);
                                 engine.exit_scope();
                             }
                         }
@@ -349,7 +395,7 @@ fn traverse(handle: &Handle, engine: &mut Engine) {
                                         );
                                     }
 
-                                    render_iteration(engine, index, total);
+                                    render_iteration(engine, index);
                                     engine.exit_scope();
                                 }
                             }
@@ -377,7 +423,7 @@ fn traverse(handle: &Handle, engine: &mut Engine) {
             let snapshot_children: Vec<Handle> = node.children.borrow().iter().cloned().collect();
             if !snapshot_children.is_empty() {
                 // Get the leading whitespace before this template (for proper indentation)
-                let separator_opt = leading_whitespace_text(node);
+                let separator_opt = leading_whitespace(node);
 
                 // Filter out all whitespace-only text nodes
                 let trimmed_children: Vec<Handle> = snapshot_children
@@ -409,7 +455,6 @@ fn traverse(handle: &Handle, engine: &mut Engine) {
                     }
                 }
             }
-            remove_leading_whitespace_text(node);
             remove_node(node);
         }
     }
@@ -446,17 +491,6 @@ fn insert_after(original: &Handle, new_sibling: &Handle) {
 
     new_sibling.parent.set(Some(parent.clone()));
     children.insert(pos, new_sibling.clone());
-}
-
-fn remove_node(node: &Handle) {
-    let parent_weak_opt = node.parent.take();
-    if let Some(parent_rc) = parent_weak_opt.and_then(|w| w.upgrade()) {
-        let mut children = parent_rc.children.borrow_mut();
-        if let Some(pos) = children.iter().position(|c| Rc::ptr_eq(c, node)) {
-            children.remove(pos);
-        }
-    }
-    node.parent.replace(None);
 }
 
 fn deep_clone_subtree(node: &Handle) -> Handle {
@@ -577,44 +611,97 @@ fn adjust_leading_indent_inplace(nodes: &mut [Handle], remove_indent: &str) {
     }
 }
 
-fn leading_whitespace_text(node: &Handle) -> Option<String> {
+fn leading_first(node: &Handle) -> Option<String> {
     let parent_weak = node.parent.take()?;
     node.parent.set(Some(parent_weak.clone()));
+
     let parent = parent_weak.upgrade()?;
     let children = parent.children.borrow();
     let idx = children.iter().position(|c| Rc::ptr_eq(c, node))?;
     if idx == 0 {
         return None;
     }
-    let before = idx - 1;
-    if is_whitespace_text_node(&children[before])
-        && let NodeData::Text { contents } = &children[before].data
-    {
-        return Some(contents.borrow().to_string());
+
+    if let NodeData::Text { contents } = &children[idx - 1].data {
+        let text = contents.borrow().to_string();
+        if let Some(last_nl_idx) = text.rfind('\n') {
+            let lead = &text[last_nl_idx..];
+            if lead.chars().all(|c| c.is_whitespace()) {
+                return Some(lead.to_string());
+            }
+        }
     }
     None
+}
+
+fn leading_whitespace(node: &Handle) -> Option<String> {
+    let parent_weak = node.parent.take()?;
+    node.parent.set(Some(parent_weak.clone()));
+
+    let parent = parent_weak.upgrade()?;
+    let children = parent.children.borrow();
+    let idx = children.iter().position(|c| Rc::ptr_eq(c, node))?;
+    if idx == 0 {
+        return None;
+    }
+
+    if let NodeData::Text { contents } = &children[idx - 1].data {
+        let text = contents.borrow().to_string();
+        if let Some(last_nl_idx) = text.rfind('\n') {
+            let lead = &text[last_nl_idx..];
+            return Some(
+                lead.chars()
+                    .map(|char| if char == '\n' { '\n' } else { ' ' })
+                    .collect(),
+            );
+        }
+    }
+    None
+}
+
+fn remove_leading(node: &Handle) -> Option<()> {
+    let parent_weak = node.parent.take()?;
+    node.parent.set(Some(parent_weak.clone()));
+
+    let parent = parent_weak.upgrade()?;
+    let mut children = parent.children.borrow_mut();
+    let idx = children.iter().position(|c| Rc::ptr_eq(c, node))?;
+    if idx == 0 {
+        return None;
+    }
+
+    if let NodeData::Text { contents } = &children[idx - 1].data {
+        let text = contents.borrow().to_string();
+        if let Some(last_nl_idx) = text.rfind('\n') {
+            let lead = &text[last_nl_idx..];
+            if lead.chars().all(|c| c.is_whitespace()) {
+                let keep = &text[..last_nl_idx];
+                *contents.borrow_mut() = Tendril::from_slice(keep);
+            }
+        } else if text.chars().all(|c| c.is_whitespace()) {
+            children.remove(idx - 1);
+        }
+    }
+    Some(())
+}
+
+fn remove_node(node: &Handle) {
+    remove_leading(node);
+
+    let parent_weak_opt = node.parent.take();
+    if let Some(parent_rc) = parent_weak_opt.and_then(|w| w.upgrade()) {
+        let mut children = parent_rc.children.borrow_mut();
+        if let Some(pos) = children.iter().position(|c| Rc::ptr_eq(c, node)) {
+            children.remove(pos);
+        }
+    }
+    node.parent.replace(None);
 }
 
 fn make_text_node(text: &str) -> Handle {
     Node::new(NodeData::Text {
         contents: RefCell::new(html5ever::tendril::StrTendril::from_slice(text)),
     })
-}
-
-fn remove_leading_whitespace_text(node: &Handle) {
-    let Some(parent_weak) = node.parent.take() else {
-        return;
-    };
-    node.parent.set(Some(parent_weak.clone()));
-    if let Some(parent) = parent_weak.upgrade() {
-        let mut children = parent.children.borrow_mut();
-        if let Some(idx) = children.iter().position(|c| Rc::ptr_eq(c, node))
-            && idx > 0
-            && is_whitespace_text_node(&children[idx - 1])
-        {
-            children.remove(idx - 1);
-        }
-    }
 }
 
 fn is_whitespace_text_node(node: &Handle) -> bool {

@@ -1,10 +1,10 @@
 [package]
 name = "prevue"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2024"
 rust-version = "1.88"
 authors = ["morugetsm <shouu6@gmail.com>"]
-description = "An HTML templating engine using Vue's template syntax."
+description = "An HTML templating engine that uses Vue's template syntax."
 license = "MIT"
 repository = "https://github.com/morugetsm/prevue"
 readme = "README.md"

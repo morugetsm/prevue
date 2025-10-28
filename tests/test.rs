@@ -17,32 +17,32 @@ fn data() -> Value {
 fn test_example() {
     let html = r#"
     <div>
+        <a :id="id">link</a>
         <p v-if="user.age >= 18">{{ user.name }} is adult</p>
         <ul>
             <li v-for="item in list">{{ item }}</li>
         </ul>
-        <a :[attribute]="value">link</a>
     </div>
     "#
     .to_string();
 
     let data = json!({
-        "user": { "name": "Alice", "age": 28 },
+        "id": "link-id",
+        "user": { "name": "James", "age": 28 },
         "list": ["a", "b", "c"],
-        "attribute": "link-id",
-        "value": 123,
     });
 
     let output = render(html, data).unwrap();
+    println!("{}", output);
 
     let expected = r#"<html><head></head><body><div>
-        <p>Alice is adult</p>
+        <a id="link-id">link</a>
+        <p>James is adult</p>
         <ul>
             <li>a</li>
             <li>b</li>
             <li>c</li>
         </ul>
-        <a link-id="123">link</a>
     </div>
     </body></html>"#;
     assert_eq!(output, expected);
