@@ -272,3 +272,22 @@ fn test_else_if_adjacent() {
     </body></html>"#;
     assert_eq!(output, expected);
 }
+
+#[test]
+fn test_if_chain_mix() {
+    let input = r#"
+    <div>
+        <div v-if="false">IF</div>
+        <div v-else>ELSE</div>
+        <div v-else-if="true">ELSE-IF</div>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <div>ELSE</div>
+        <div>ELSE-IF</div>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}

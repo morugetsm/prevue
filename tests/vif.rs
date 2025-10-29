@@ -71,3 +71,100 @@ fn test_if_safety() {
     </body></html>"#;
     assert_eq!(output, expected);
 }
+
+#[test]
+fn test_if_with_else1() {
+    let input = r#"
+    <div>
+        <div v-if="true" v-else>IF</div>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <div>IF</div>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_if_with_else2() {
+    let input = r#"
+    <div>
+        <div v-else v-if="true">ELSE</div>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <div>ELSE</div>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_if_with_else_if1() {
+    let input = r#"
+    <div>
+        <div v-if="true" v-else-if="false">IF</div>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <div>IF</div>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_if_with_else_if2() {
+    let input = r#"
+    <div>
+        <div v-else-if="false" v-if="true">IF</div>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <div>IF</div>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_if_with_for1() {
+    // v-if takes precedence over v-for
+    let input = r#"
+    <div>
+        <div v-if="true" v-for="item in list">IF</div>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <div>IF</div>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_if_with_for2() {
+    // Directive precedence is fixed (not by order of appearance)
+    let input = r#"
+    <div>
+        <div v-for="item in list" v-if="item > 1">IF{{ item }}</div>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}

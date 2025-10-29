@@ -25,8 +25,8 @@ static SYNTAX_BIND_ARG: LazyLock<Regex> = LazyLock::new(|| {
 ///
 /// # Example
 /// ```
-/// # use prevue::render;
-/// # use serde_json::json;
+/// use prevue::render;
+/// use serde_json::json;
 ///
 /// let html = r#"<div><p v-if="show">{{ text }}</p></div>"#.to_string();
 /// let data = json!({"show": true, "text": "Hello"});
@@ -232,8 +232,12 @@ fn traverse(handle: &Handle, engine: &mut Engine) {
                     }
                 }
 
-                // v-if
-                if let Some(attr_value) = find_and_remove_directive(attrs, "v-if") {
+                let v_if = find_and_remove_directive(attrs, "v-if");
+                let v_else_if = find_and_remove_directive(attrs, "v-else-if");
+                let v_else = find_and_remove_directive(attrs, "v-else");
+                let v_for = find_and_remove_directive(attrs, "v-for");
+
+                if let Some(attr_value) = v_if {
                     in_if_chain = true;
 
                     match engine.eval_bool(&attr_value).unwrap_or(false) {
@@ -249,7 +253,7 @@ fn traverse(handle: &Handle, engine: &mut Engine) {
                     continue;
                 }
 
-                if let Some(attr_value) = find_and_remove_directive(attrs, "v-else-if")
+                if let Some(attr_value) = v_else_if
                     && in_if_chain
                 {
                     if if_chain_hit {
@@ -270,7 +274,7 @@ fn traverse(handle: &Handle, engine: &mut Engine) {
                     continue;
                 }
 
-                if let Some(_attr_value) = find_and_remove_directive(attrs, "v-else")
+                if let Some(_attr_value) = v_else
                     && in_if_chain
                 {
                     if if_chain_hit {
@@ -279,13 +283,14 @@ fn traverse(handle: &Handle, engine: &mut Engine) {
                     }
                     if_chain_hit = true;
                     traverse(node, engine);
+
+                    in_if_chain = false;
                     continue;
                 }
 
                 in_if_chain = false;
 
-                // v-for
-                if let Some(attr_value) = find_and_remove_directive(attrs, "v-for") {
+                if let Some(attr_value) = v_for {
                     let Some(syntax) = SYNTAX_FOR.captures(attr_value.as_str()) else {
                         remove_node(node);
                         continue;
