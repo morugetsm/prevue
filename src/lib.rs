@@ -232,6 +232,12 @@ fn traverse(handle: &Handle, engine: &mut Engine) {
                     }
                 }
 
+                let v_pre = find_and_remove_directive(attrs, "v-pre");
+
+                if let Some(_) = v_pre {
+                    continue;
+                }
+
                 let v_if = find_and_remove_directive(attrs, "v-if");
                 let v_else_if = find_and_remove_directive(attrs, "v-else-if");
                 let v_else = find_and_remove_directive(attrs, "v-else");

@@ -7,7 +7,7 @@ An HTML templating engine that uses [Vue](https://github.com/vuejs/core)'s [temp
 
 ```toml
 [dependencies]
-prevue = "0.0.2"
+prevue = "0.0.3"
 ```
 
 
@@ -66,7 +66,7 @@ let output = render(html, data).unwrap();
 | `v-else-if` | ✅ |  |
 | `v-for` | 🟡 | Array and Object only |
 | `v-text`, `v-html` | ❌ |  |
-| `v-pre` | ❌ |  |
+| `v-pre` | ✅ |  |
 
 
 ## Important Notes
