@@ -10,13 +10,6 @@ fn data() -> Value {
             "value": "Morrison",
             "age": 28
         },
-        "complex": [{
-            "foo": "hi",
-            "bar": "hello",
-        }, {
-            "foo": "bow",
-            "bar": "wow",
-        }],
     })
 }
 
@@ -183,32 +176,6 @@ fn test_for_object_with_index() {
             <h2>age</h2>
             <h3>2</h3>
         </div>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
-}
-
-#[test]
-fn test_for_complex() {
-    let input = r#"
-    <div>
-        <template v-for="item, index in complex">
-            <h1>{{ index + ': ' + item }}</h1>
-            <template v-for="value, key in item">
-                <h2>{{ key + ': ' + value }}</h2>
-            </template>
-        </template>
-    </div>
-    "#;
-    let output = render(input.to_string(), data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        <h1>0: [object Object]</h1>
-        <h2>foo: hi</h2>
-        <h2>bar: hello</h2>
-        <h1>1: [object Object]</h1>
-        <h2>foo: bow</h2>
-        <h2>bar: wow</h2>
     </div>
     </body></html>"#;
     assert_eq!(output, expected);

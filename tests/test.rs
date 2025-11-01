@@ -49,6 +49,41 @@ fn test_example() {
 }
 
 #[test]
+fn test_example_with_less_indent() {
+    let html = r#"
+  <div>
+    <a :id="id">link</a>
+    <p v-if="user.age >= 18">{{ user.name }} is adult</p>
+    <ul>
+      <li v-for="item in list">{{ item }}</li>
+    </ul>
+  </div>
+    "#
+    .to_string();
+
+    let data = json!({
+        "id": "link-id",
+        "user": { "name": "James", "age": 28 },
+        "list": ["a", "b", "c"],
+    });
+
+    let output = render(html, data).unwrap();
+    println!("{}", output);
+
+    let expected = r#"<html><head></head><body><div>
+    <a id="link-id">link</a>
+    <p>James is adult</p>
+    <ul>
+      <li>a</li>
+      <li>b</li>
+      <li>c</li>
+    </ul>
+  </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
 fn test_html5ever() {
     let input = "";
     let output = render(input.to_string(), data()).unwrap();

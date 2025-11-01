@@ -2,7 +2,7 @@ use prevue::render;
 use serde_json::{Value, json};
 
 #[test]
-fn test_vpre() {
+fn test_pre() {
     let input = r#"
     <div>
         <div v-pre>PRE</div>
@@ -18,7 +18,7 @@ fn test_vpre() {
 }
 
 #[test]
-fn test_vpre_empty() {
+fn test_pre_empty() {
     let input = r#"
     <div>
         <div v-pre></div>
@@ -34,7 +34,7 @@ fn test_vpre_empty() {
 }
 
 #[test]
-fn test_vpre_with_mustache() {
+fn test_pre_with_mustache() {
     let input = r#"
     <div>
         <div v-pre>{{ text }} {{ number }}</div>
@@ -50,7 +50,7 @@ fn test_vpre_with_mustache() {
 }
 
 #[test]
-fn test_vpre_with_if() {
+fn test_pre_with_if() {
     let input = r#"
     <div>
         <div v-pre v-if="show">{{ text }}</div>
@@ -66,7 +66,7 @@ fn test_vpre_with_if() {
 }
 
 #[test]
-fn test_vpre_with_nested_directives() {
+fn test_pre_with_nested_directives() {
     let input = r#"
     <div>
         <div v-pre>
@@ -88,7 +88,7 @@ fn test_vpre_with_nested_directives() {
 }
 
 #[test]
-fn test_vpre_with_bind() {
+fn test_pre_with_bind() {
     let input = r#"
     <div>
         <div v-pre :id="id">{{ text }}</div>
@@ -104,7 +104,7 @@ fn test_vpre_with_bind() {
 }
 
 #[test]
-fn test_vpre_multiline() {
+fn test_pre_multiline() {
     let input = r#"
     <div>
         <div v-pre>
@@ -126,7 +126,7 @@ fn test_vpre_multiline() {
 }
 
 #[test]
-fn test_vpre_nested_vpre() {
+fn test_pre_nested_pre() {
     let input = r#"
     <div>
         <div v-pre>
@@ -148,7 +148,7 @@ fn test_vpre_nested_vpre() {
 }
 
 #[test]
-fn test_vpre_sibling_elements() {
+fn test_pre_sibling_elements() {
     let input = r#"
     <div>
         <p>{{ text }}</p>
