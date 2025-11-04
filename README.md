@@ -1,5 +1,8 @@
 # prevue
 
+[![CI](https://github.com/morugetsm/prevue/actions/workflows/ci.yml/badge.svg)](https://github.com/morugetsm/prevue/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/prevue.svg)](https://crates.io/crates/prevue)
+
 An HTML templating engine that uses [Vue](https://github.com/vuejs/core)'s [template syntax](https://vuejs.org/guide/essentials/template-syntax). Parses HTML, evaluates inline JavaScript expressions, and returns rendered output.
 
 
