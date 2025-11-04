@@ -1,4 +1,4 @@
-use boa_engine::{JsString, JsValue, JsVariant, js_string};
+use boa_engine::{JsValue, JsVariant, property::PropertyKey};
 use html5ever::{
     QualName,
     driver::ParseOpts,
@@ -22,7 +22,10 @@ static SYNTAX_BIND_ARG: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"^(?:(?:v-bind:)|:)(?P<arg>\[[^\]]+\]|[A-Za-z_][A-Za-z0-9_\-:]*)$"#).unwrap()
 });
 static SYNTAX_FOR: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\s*(?<value>\w+)\s*(?:,\s*(?<key>\w+)\s*(?:,\s*(?<index>\w+)\s*)?)?\s+in\s+(?<iter>.+)\s*$").unwrap()
+    Regex::new(
+        r"^\s*(?<val>\w+)\s*(?:,\s*(?<key>\w+)\s*(?:,\s*(?<idx>\w+)\s*)?)?\s+in\s+(?<iter>.+)\s*$",
+    )
+    .unwrap()
 });
 
 /// Render HTML template with data
@@ -370,48 +373,48 @@ fn process_directives(
 
 // Process for directive
 fn process_for(node: &Handle, engine: &mut Engine, expr: &str) -> Vec<Handle> {
+    let mut result_nodes = Vec::new();
+
     let Some(syntax) = SYNTAX_FOR.captures(expr) else {
-        return Vec::new();
+        return result_nodes;
     };
-    let Some(value_iden) = syntax.name("value") else {
-        return Vec::new();
+    let Some(val_iden) = syntax.name("val") else {
+        return result_nodes;
     };
     let Some(iter_iden) = syntax.name("iter") else {
-        return Vec::new();
+        return result_nodes;
     };
-
-    let mut result_nodes = Vec::new();
 
     let separator_rest = get_indent(node);
 
-    let iter_expr_raw = iter_iden.as_str();
-    let iter_expr_trim = iter_expr_raw.trim_start();
-    let iter_wrapped = if iter_expr_trim.starts_with('{') {
-        format!("({})", iter_expr_raw)
+    let iter_expr = iter_iden.as_str().trim();
+    let iter_wrapped = if iter_expr.starts_with('{') {
+        format!("({})", iter_expr)
     } else {
-        iter_expr_raw.to_string()
+        iter_expr.to_string()
     };
 
     match engine.eval(iter_wrapped.as_str()).map(|val| val.variant()) {
         Ok(JsVariant::Object(obj)) if obj.is_array() => {
-            let total = obj
-                .get(js_string!("length"), &mut engine.context)
-                .ok()
-                .and_then(|v| v.to_u32(&mut engine.context).ok())
-                .unwrap_or(0) as usize;
+            let Ok(keys) = obj.own_property_keys(&mut engine.context) else {
+                return result_nodes;
+            };
 
-            for index in 0..total {
+            for property_key in keys.iter() {
+                let PropertyKey::Index(index) = property_key else {
+                    continue;
+                };
                 if engine.enter_scope().is_err() {
                     continue;
                 }
 
                 let item = obj
-                    .get(js_string!(index), &mut engine.context)
+                    .get(property_key.clone(), &mut engine.context)
                     .unwrap_or(JsValue::undefined());
-                engine.set_val(value_iden.as_str(), item);
+                engine.set_val(val_iden.as_str(), item);
 
                 if let Some(key_iden) = syntax.name("key") {
-                    engine.set_val(key_iden.as_str(), JsValue::new(index as i32));
+                    engine.set_val(key_iden.as_str(), JsValue::new(index.get()));
                 }
 
                 let targets = expand_targets(node);
@@ -467,94 +470,77 @@ fn process_for(node: &Handle, engine: &mut Engine, expr: &str) -> Vec<Handle> {
             }
         }
         Ok(JsVariant::Object(obj)) => {
-            let keys_arr = engine
-                .eval(format!("Object.keys(({}))", iter_expr_raw).as_str())
-                .ok();
-            if let Some(JsVariant::Object(keys_obj)) = keys_arr.map(|val| val.variant()) {
-                let total = keys_obj
-                    .get(js_string!("length"), &mut engine.context)
-                    .ok()
-                    .and_then(|v| v.to_u32(&mut engine.context).ok())
-                    .unwrap_or(0) as usize;
+            let Ok(property_keys) = obj.own_property_keys(&mut engine.context) else {
+                return result_nodes;
+            };
 
-                for index in 0..total {
-                    if engine.enter_scope().is_err() {
-                        continue;
-                    }
+            for (idx, property_key) in property_keys.iter().enumerate() {
+                if engine.enter_scope().is_err() {
+                    continue;
+                }
 
-                    let key_val = keys_obj
-                        .get(js_string!(index.to_string()), &mut engine.context)
-                        .unwrap_or(JsValue::undefined());
-                    let key_jsstr = key_val
-                        .to_string(&mut engine.context)
-                        .unwrap_or_else(|_| JsString::from(""));
-                    let value = obj
-                        .get(key_jsstr.clone(), &mut engine.context)
-                        .unwrap_or(JsValue::undefined());
+                let value = obj
+                    .get(property_key.clone(), &mut engine.context)
+                    .unwrap_or(JsValue::undefined());
+                engine.set_val(val_iden.as_str(), value);
 
-                    engine.set_val(value_iden.as_str(), value);
-                    if let Some(key_iden) = syntax.name("key") {
-                        engine.set_val(key_iden.as_str(), JsValue::from(key_jsstr));
-                    }
-                    if let Some(index_iden) = syntax.name("index") {
-                        engine.set_val(index_iden.as_str(), JsValue::new(index as i32));
-                    }
+                if let Some(key_iden) = syntax.name("key") {
+                    engine.set_val(key_iden.as_str(), property_key.into());
+                }
+                if let Some(idx_iden) = syntax.name("idx") {
+                    engine.set_val(idx_iden.as_str(), JsValue::new(idx as i32));
+                }
 
-                    let targets = expand_targets(node);
-                    if targets.is_empty() {
-                        engine.exit_scope();
-                        continue;
-                    }
+                let targets = expand_targets(node);
+                if targets.is_empty() {
+                    engine.exit_scope();
+                    continue;
+                }
 
-                    let mut iteration_nodes = Vec::new();
-                    for (target_idx, target) in targets.into_iter().enumerate() {
-                        let mut dummy_in_chain = false;
-                        let mut dummy_hit = false;
-                        let replacement = process_directives(
-                            &target,
-                            engine,
-                            &mut dummy_in_chain,
-                            &mut dummy_hit,
-                        );
+                let mut iteration_nodes = Vec::new();
+                for (target_idx, target) in targets.into_iter().enumerate() {
+                    let mut dummy_in_chain = false;
+                    let mut dummy_hit = false;
+                    let replacement =
+                        process_directives(&target, engine, &mut dummy_in_chain, &mut dummy_hit);
 
-                        match replacement {
-                            Some(new_nodes) => {
-                                for (idx, new_node) in new_nodes.iter().enumerate() {
-                                    if ((target_idx > 0 && idx == 0 && !iteration_nodes.is_empty())
-                                        || idx > 0)
-                                        && !is_whitespace_text_node(new_node)
-                                        && let Some(sep) = &separator_rest
-                                    {
-                                        iteration_nodes.push(create_text_node(sep));
-                                    }
-                                    traverse(new_node, engine);
-                                    iteration_nodes.push(new_node.clone());
-                                }
-                            }
-                            None => {
-                                if target_idx > 0
-                                    && !iteration_nodes.is_empty()
+                    match replacement {
+                        Some(new_nodes) => {
+                            for (idx, new_node) in new_nodes.iter().enumerate() {
+                                if ((target_idx > 0 && idx == 0 && !iteration_nodes.is_empty())
+                                    || idx > 0)
+                                    && !is_whitespace_text_node(new_node)
                                     && let Some(sep) = &separator_rest
                                 {
                                     iteration_nodes.push(create_text_node(sep));
                                 }
-                                traverse(&target, engine);
-                                iteration_nodes.push(target);
+                                traverse(new_node, engine);
+                                iteration_nodes.push(new_node.clone());
                             }
                         }
-                    }
-
-                    if !iteration_nodes.is_empty() {
-                        if !result_nodes.is_empty()
-                            && let Some(sep) = &separator_rest
-                        {
-                            result_nodes.push(create_text_node(sep));
+                        None => {
+                            if target_idx > 0
+                                && !iteration_nodes.is_empty()
+                                && let Some(sep) = &separator_rest
+                            {
+                                iteration_nodes.push(create_text_node(sep));
+                            }
+                            traverse(&target, engine);
+                            iteration_nodes.push(target);
                         }
-                        result_nodes.extend(iteration_nodes);
                     }
-
-                    engine.exit_scope();
                 }
+
+                if !iteration_nodes.is_empty() {
+                    if !result_nodes.is_empty()
+                        && let Some(sep) = &separator_rest
+                    {
+                        result_nodes.push(create_text_node(sep));
+                    }
+                    result_nodes.extend(iteration_nodes);
+                }
+
+                engine.exit_scope();
             }
         }
         _ => {}
