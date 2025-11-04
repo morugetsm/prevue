@@ -158,21 +158,11 @@ fn replace_in_children_source(node: &Handle, new_nodes: &[Handle]) {
 // Get children source: template_contents for <template> with directives, else children
 fn get_children_source(handle: &Handle) -> Vec<Handle> {
     if let NodeData::Element {
-        name,
-        template_contents,
-        attrs,
-        ..
+        template_contents, ..
     } = &handle.data
-        && name.local.as_ref() == "template"
+        && let Some(tc) = template_contents.borrow().as_ref()
     {
-        let has_directive = attrs.borrow().iter().any(|a| {
-            let n = a.name.local.as_ref();
-            n.starts_with("v-") || n.starts_with(":")
-        });
-
-        if has_directive && let Some(tc) = template_contents.borrow().as_ref() {
-            return tc.children.borrow().iter().cloned().collect();
-        }
+        return tc.children.borrow().iter().cloned().collect();
     }
     handle.children.borrow().iter().cloned().collect()
 }
@@ -319,13 +309,13 @@ fn process_directives(
         return None;
     };
 
-    let v_if = find_and_remove_directive(attrs, "v-if");
-    let v_else_if = find_and_remove_directive(attrs, "v-else-if");
-    let v_else = find_and_remove_directive(attrs, "v-else");
-    let v_for = find_and_remove_directive(attrs, "v-for");
+    let directive_if = find_and_remove_directive(attrs, "v-if");
+    let directive_elif = find_and_remove_directive(attrs, "v-else-if");
+    let directive_else = find_and_remove_directive(attrs, "v-else");
+    let directive_for = find_and_remove_directive(attrs, "v-for");
 
-    // v-if
-    if let Some(expr) = v_if {
+    // if
+    if let Some(expr) = directive_if {
         *in_if_chain = true;
         if engine.eval_bool(&expr).unwrap_or(false) {
             *if_chain_hit = true;
@@ -336,48 +326,50 @@ fn process_directives(
         }
     }
 
-    // v-else-if
-    if let Some(expr) = v_else_if {
-        if *in_if_chain {
-            if *if_chain_hit {
-                return Some(Vec::new());
-            }
-            if engine.eval_bool(&expr).unwrap_or(false) {
-                *if_chain_hit = true;
-                return Some(expand_targets(node));
-            } else {
-                *if_chain_hit = false;
-                return Some(Vec::new());
-            }
+    // else-if
+    if let Some(expr) = directive_elif {
+        if !*in_if_chain {
+            return None;
         }
-        return None;
-    }
 
-    // v-else
-    if v_else.is_some() {
-        if *in_if_chain {
-            *in_if_chain = false;
-            if *if_chain_hit {
-                return Some(Vec::new());
-            }
+        if *if_chain_hit {
+            return Some(Vec::new());
+        }
+        if engine.eval_bool(&expr).unwrap_or(false) {
             *if_chain_hit = true;
             return Some(expand_targets(node));
+        } else {
+            *if_chain_hit = false;
+            return Some(Vec::new());
         }
-        return None;
+    }
+
+    // else
+    if directive_else.is_some() {
+        if !*in_if_chain {
+            return None;
+        }
+
+        *in_if_chain = false;
+        if *if_chain_hit {
+            return Some(Vec::new());
+        }
+        *if_chain_hit = true;
+        return Some(expand_targets(node));
     }
 
     *in_if_chain = false;
 
-    // v-for
-    if let Some(expr) = v_for {
-        return Some(process_v_for(node, engine, &expr));
+    // for
+    if let Some(expr) = directive_for {
+        return Some(process_for(node, engine, &expr));
     }
 
     None
 }
 
-// Process v-for directive
-fn process_v_for(node: &Handle, engine: &mut Engine, expr: &str) -> Vec<Handle> {
+// Process for directive
+fn process_for(node: &Handle, engine: &mut Engine, expr: &str) -> Vec<Handle> {
     let Some(syntax) = SYNTAX_FOR.captures(expr) else {
         return Vec::new();
     };
@@ -390,7 +382,7 @@ fn process_v_for(node: &Handle, engine: &mut Engine, expr: &str) -> Vec<Handle> 
 
     let mut result_nodes = Vec::new();
 
-    let separator_rest = leading_whitespace(node);
+    let separator_rest = get_indent(node);
 
     let iter_expr_raw = iter_iden.as_str();
     let iter_expr_trim = iter_expr_raw.trim_start();
@@ -414,7 +406,7 @@ fn process_v_for(node: &Handle, engine: &mut Engine, expr: &str) -> Vec<Handle> 
                 }
 
                 let item = obj
-                    .get(js_string!(index.to_string()), &mut engine.context)
+                    .get(js_string!(index), &mut engine.context)
                     .unwrap_or(JsValue::undefined());
                 engine.set_val(value_iden.as_str(), item);
 
@@ -443,7 +435,7 @@ fn process_v_for(node: &Handle, engine: &mut Engine, expr: &str) -> Vec<Handle> 
                                     && !is_whitespace_text_node(new_node)
                                     && let Some(sep) = &separator_rest
                                 {
-                                    iteration_nodes.push(make_text_node(sep));
+                                    iteration_nodes.push(create_text_node(sep));
                                 }
                                 traverse(new_node, engine);
                                 iteration_nodes.push(new_node.clone());
@@ -454,7 +446,7 @@ fn process_v_for(node: &Handle, engine: &mut Engine, expr: &str) -> Vec<Handle> 
                                 && !iteration_nodes.is_empty()
                                 && let Some(sep) = &separator_rest
                             {
-                                iteration_nodes.push(make_text_node(sep));
+                                iteration_nodes.push(create_text_node(sep));
                             }
                             traverse(&target, engine);
                             iteration_nodes.push(target);
@@ -466,7 +458,7 @@ fn process_v_for(node: &Handle, engine: &mut Engine, expr: &str) -> Vec<Handle> 
                     if !result_nodes.is_empty()
                         && let Some(sep) = &separator_rest
                     {
-                        result_nodes.push(make_text_node(sep));
+                        result_nodes.push(create_text_node(sep));
                     }
                     result_nodes.extend(iteration_nodes);
                 }
@@ -533,7 +525,7 @@ fn process_v_for(node: &Handle, engine: &mut Engine, expr: &str) -> Vec<Handle> 
                                         && !is_whitespace_text_node(new_node)
                                         && let Some(sep) = &separator_rest
                                     {
-                                        iteration_nodes.push(make_text_node(sep));
+                                        iteration_nodes.push(create_text_node(sep));
                                     }
                                     traverse(new_node, engine);
                                     iteration_nodes.push(new_node.clone());
@@ -544,7 +536,7 @@ fn process_v_for(node: &Handle, engine: &mut Engine, expr: &str) -> Vec<Handle> 
                                     && !iteration_nodes.is_empty()
                                     && let Some(sep) = &separator_rest
                                 {
-                                    iteration_nodes.push(make_text_node(sep));
+                                    iteration_nodes.push(create_text_node(sep));
                                 }
                                 traverse(&target, engine);
                                 iteration_nodes.push(target);
@@ -556,7 +548,7 @@ fn process_v_for(node: &Handle, engine: &mut Engine, expr: &str) -> Vec<Handle> 
                         if !result_nodes.is_empty()
                             && let Some(sep) = &separator_rest
                         {
-                            result_nodes.push(make_text_node(sep));
+                            result_nodes.push(create_text_node(sep));
                         }
                         result_nodes.extend(iteration_nodes);
                     }
@@ -580,14 +572,32 @@ fn expand_targets(node: &Handle) -> Vec<Handle> {
         && name.local.as_ref() == "template"
     {
         if let Some(tc) = template_contents.borrow().as_ref() {
+            let template_indent = get_indent(node)
+                .map(|s| s.chars().filter(|c| *c == ' ').count())
+                .unwrap_or(0);
+
+            let first_child_indent = tc
+                .children
+                .borrow()
+                .iter()
+                .find(|c| !is_whitespace_text_node(c))
+                .and_then(get_indent)
+                .map(|s| s.chars().filter(|c| *c == ' ').count())
+                .unwrap_or(0);
+
+            let indent_adjustment = template_indent as isize - first_child_indent as isize;
+
             return tc
                 .children
                 .borrow()
                 .iter()
                 .filter(|c| !is_whitespace_text_node(c))
                 .map(|c| {
-                    let cloned = deep_clone_subtree(c);
+                    let cloned = clone_node(c);
                     cloned.parent.take();
+                    if indent_adjustment != 0 {
+                        adjust_indent_in_subtree(&cloned, indent_adjustment);
+                    }
                     cloned
                 })
                 .collect();
@@ -595,7 +605,7 @@ fn expand_targets(node: &Handle) -> Vec<Handle> {
             return Vec::new();
         }
     }
-    let cloned = deep_clone_subtree(node);
+    let cloned = clone_node(node);
     cloned.parent.take();
     vec![cloned]
 }
@@ -613,10 +623,10 @@ fn find_and_remove_directive(
     }
 }
 
-fn deep_clone_subtree(node: &Handle) -> Handle {
+fn clone_node(node: &Handle) -> Handle {
     fn clone_children(from: &Handle, to: &Handle) {
         for child in from.children.borrow().iter() {
-            let cloned_child = deep_clone_subtree(child);
+            let cloned_child = clone_node(child);
             cloned_child.parent.set(Some(Rc::downgrade(to)));
             to.children.borrow_mut().push(cloned_child);
         }
@@ -676,7 +686,7 @@ fn deep_clone_subtree(node: &Handle) -> Handle {
     }
 }
 
-fn leading_whitespace(node: &Handle) -> Option<String> {
+fn get_indent(node: &Handle) -> Option<String> {
     let parent_weak = node.parent.take()?;
     node.parent.set(Some(parent_weak.clone()));
     let parent = parent_weak.upgrade()?;
@@ -702,7 +712,48 @@ fn leading_whitespace(node: &Handle) -> Option<String> {
     None
 }
 
-fn make_text_node(text: &str) -> Handle {
+fn adjust_indent_in_subtree(node: &Handle, indent_adjustment: isize) {
+    if let NodeData::Text { contents } = &node.data {
+        let text = contents.borrow().to_string();
+        let adjusted = adjust_text_indent(&text, indent_adjustment);
+        contents.replace(StrTendril::from_str(&adjusted).unwrap());
+    }
+
+    for child in node.children.borrow().iter() {
+        adjust_indent_in_subtree(child, indent_adjustment);
+    }
+
+    if let NodeData::Element {
+        template_contents, ..
+    } = &node.data
+        && let Some(tc) = template_contents.borrow().as_ref()
+    {
+        for child in tc.children.borrow().iter() {
+            adjust_indent_in_subtree(child, indent_adjustment);
+        }
+    }
+}
+
+fn adjust_text_indent(text: &str, adjustment: isize) -> String {
+    let lines: Vec<&str> = text.split('\n').collect();
+    lines
+        .iter()
+        .enumerate()
+        .map(|(i, line)| {
+            if i == 0 {
+                line.to_string()
+            } else {
+                let spaces = line.chars().take_while(|c| *c == ' ').count();
+                let new_spaces = (spaces as isize + adjustment).max(0) as usize;
+                let rest = line.trim_start();
+                format!("{}{}", " ".repeat(new_spaces), rest)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn create_text_node(text: &str) -> Handle {
     Node::new(NodeData::Text {
         contents: RefCell::new(StrTendril::from_str(text).unwrap()),
     })

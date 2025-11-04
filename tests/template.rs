@@ -100,6 +100,62 @@ fn test_template_for_element() {
 }
 
 #[test]
+fn test_template_for_element_linebreak() {
+    let input = r#"
+    <div>
+        <template v-for="item in list">
+            <div>
+                {{ item }}
+            </div>
+        </template>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <div>
+            1
+        </div>
+        <div>
+            2
+        </div>
+        <div>
+            3
+        </div>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_template_for_element_linebreak_with_less_indent() {
+    let input = r#"
+  <div>
+    <template v-for="item in list">
+      <div>
+        {{ item }}
+      </div>
+    </template>
+  </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+    <div>
+      1
+    </div>
+    <div>
+      2
+    </div>
+    <div>
+      3
+    </div>
+  </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
 fn test_template_for_complex() {
     let input = r#"
     <div>
@@ -202,17 +258,15 @@ fn test_template_for_object_with_key_index() {
     let input = r#"
     <div>
         <template v-for="val, key, idx in { a: 1, b: 2 }">
-            <p>{{ key + ':' + val + ':' + idx }}</p>
+            <p>{{ `[${idx}] ${key}: ${val}` }}</p>
         </template>
     </div>
     "#;
     let output = render(input.to_string(), data()).unwrap();
 
-    // Object keys order is not guaranteed; but our engine uses Object.keys order
-    // Expected based on insertion order { a: 1, b: 2 }
     let expected = r#"<html><head></head><body><div>
-        <p>a:1:0</p>
-        <p>b:2:1</p>
+        <p>[0] a: 1</p>
+        <p>[1] b: 2</p>
     </div>
     </body></html>"#;
     assert_eq!(output, expected);
@@ -223,7 +277,9 @@ fn test_template_for_with_inner_if() {
     let input = r#"
     <div>
         <template v-for="n in [1, 2, 3]">
-            <template v-if="n % 2 === 1"><span>{{ n }}</span></template>
+            <template v-if="n % 2 === 1">
+                <span>{{ n }}</span>
+            </template>
         </template>
     </div>
     "#;

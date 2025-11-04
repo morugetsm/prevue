@@ -33,7 +33,6 @@ fn test_example() {
     });
 
     let output = render(html, data).unwrap();
-    println!("{}", output);
 
     let expected = r#"<html><head></head><body><div>
         <a id="link-id">link</a>
@@ -68,7 +67,6 @@ fn test_example_with_less_indent() {
     });
 
     let output = render(html, data).unwrap();
-    println!("{}", output);
 
     let expected = r#"<html><head></head><body><div>
     <a id="link-id">link</a>
