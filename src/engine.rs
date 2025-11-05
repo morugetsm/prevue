@@ -5,8 +5,8 @@ use boa_engine::{
 };
 use serde::Serialize;
 
-pub struct Engine {
-    pub(crate) context: Context,
+pub(crate) struct Engine {
+    pub context: Context,
     scope_keys: Vec<String>,
     scope_next: AtomicUsize,
 }
@@ -21,8 +21,9 @@ impl Engine {
 
         engine.enter_scope().unwrap();
 
-        let json = serde_json::to_value(data).unwrap();
-        if let Some(obj) = json.as_object() {
+        if let Ok(json) = serde_json::to_value(data)
+            && let Some(obj) = json.as_object()
+        {
             for (key, value) in obj.iter() {
                 if let Ok(val) = JsValue::from_json(value, &mut engine.context) {
                     engine.set_val(key.as_str(), val);
