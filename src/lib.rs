@@ -96,9 +96,9 @@ fn hydrate_node(handle: &Handle, engine: &mut Engine) {
             for (i, attr) in attrs.borrow().iter().enumerate() {
                 let name_ref: &str = attr.name.local.as_ref();
 
+                // v-bind object syntax: v-bind="{ key: value }"
                 if name_ref == "v-bind" {
-                    let expr = attr.value.to_string();
-                    if let Ok(js_val) = engine.eval(expr.as_str())
+                    if let Ok(js_val) = engine.eval(attr.value.as_ref())
                         && let Ok(Some(json_val)) = js_val.to_json(&mut engine.context)
                         && let Some(obj) = json_val.as_object()
                     {
@@ -118,52 +118,42 @@ fn hydrate_node(handle: &Handle, engine: &mut Engine) {
                     continue;
                 }
 
+                // v-bind argument syntax: :attr="value" or v-bind:attr="value"
                 if let Some(caps) = SYNTAX_BIND_ARG.captures(name_ref) {
-                    let arg_raw = caps
-                        .name("arg")
-                        .map(|m| m.as_str().to_string())
-                        .unwrap_or_default();
+                    let arg_raw = caps.name("arg").map(|m| m.as_str()).unwrap_or("");
+                    let value_expr = attr.value.trim();
 
-                    let value_expr_raw = attr.value.to_string();
-                    let value_expr_trim = value_expr_raw.trim();
-
-                    if arg_raw.starts_with('[')
-                        && arg_raw.ends_with(']')
-                        && value_expr_trim.is_empty()
-                    {
-                        removals.push(i);
-                        continue;
-                    }
-
-                    let arg =
-                        if arg_raw.starts_with('[') && arg_raw.ends_with(']') && arg_raw.len() >= 2
-                        {
-                            let inner = &arg_raw[1..arg_raw.len() - 1];
-                            let Some(resolved) = engine.eval_str(inner) else {
+                    if arg_raw.starts_with('[') && arg_raw.ends_with(']') {
+                        if value_expr.is_empty() {
+                            removals.push(i);
+                            continue;
+                        }
+                        let inner = &arg_raw[1..arg_raw.len() - 1];
+                        if let Some(resolved) = engine.eval_str(inner) {
+                            if let Some(value) = engine.eval_str(value_expr) {
+                                renames.push((i, resolved, value));
+                            } else {
                                 removals.push(i);
-                                continue;
-                            };
-                            resolved
+                            }
                         } else {
-                            arg_raw
-                        };
-
-                    let value_opt = if value_expr_trim.is_empty() {
-                        engine.eval_str(&arg)
+                            removals.push(i);
+                        }
                     } else {
-                        engine.eval_str(value_expr_trim)
-                    };
-
-                    let Some(value) = value_opt else {
-                        removals.push(i);
-                        continue;
-                    };
-
-                    renames.push((i, arg, value));
-                    continue;
+                        let value_opt = if value_expr.is_empty() {
+                            engine.eval_str(arg_raw)
+                        } else {
+                            engine.eval_str(value_expr)
+                        };
+                        if let Some(value) = value_opt {
+                            renames.push((i, arg_raw.to_string(), value));
+                        } else {
+                            removals.push(i);
+                        }
+                    }
                 }
             }
 
+            // Apply modifications
             let mut attrs_mut = attrs.borrow_mut();
             for (idx, new_name, new_value) in renames.iter().rev() {
                 attrs_mut[*idx].name.local = html5ever::LocalName::from(new_name.as_str());
@@ -182,13 +172,12 @@ fn hydrate_node(handle: &Handle, engine: &mut Engine) {
                 {
                     existing.value = StrTendril::from_str(value.as_str()).unwrap();
                 } else {
-                    let qn = QualName::new(
-                        template_qn.prefix.clone(),
-                        template_qn.ns.clone(),
-                        html5ever::LocalName::from(local_name.as_str()),
-                    );
                     attrs_mut.push(html5ever::Attribute {
-                        name: qn,
+                        name: QualName::new(
+                            template_qn.prefix.clone(),
+                            template_qn.ns.clone(),
+                            html5ever::LocalName::from(local_name.as_str()),
+                        ),
                         value: StrTendril::from_str(value.as_str()).unwrap(),
                     });
                 }
@@ -226,51 +215,45 @@ fn replace_in_children_source(node: &Handle, new_nodes: &[Handle]) {
     };
 
     let mut children = node_parent.children.borrow_mut();
-    if let Some(pos) = children.iter().position(|c| Rc::ptr_eq(c, node)) {
-        let has_indent = if pos > 0 {
+    let Some(pos) = children.iter().position(|c| Rc::ptr_eq(c, node)) else {
+        return;
+    };
+
+    // Check if previous sibling is whitespace indent
+    let has_indent_before = pos > 0 && {
+        if let NodeData::Text { contents } = &children[pos - 1].data {
+            let text = contents.borrow();
+            text.chars().all(|c| c.is_whitespace())
+                || text
+                    .rfind('\n')
+                    .is_some_and(|nl| text[nl + 1..].chars().all(|c| c.is_whitespace()))
+        } else {
+            false
+        }
+    };
+
+    if new_nodes.is_empty() {
+        // Removing node: also remove preceding indent if present
+        if has_indent_before {
             if let NodeData::Text { contents } = &children[pos - 1].data {
                 let text = contents.borrow().to_string();
                 if text.chars().all(|c| c.is_whitespace()) {
-                    true
-                } else if let Some(last_nl) = text.rfind('\n') {
-                    let after_nl = &text[last_nl + 1..];
-                    !after_nl.is_empty() && after_nl.chars().all(|c| c.is_whitespace())
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        } else {
-            false
-        };
-
-        if new_nodes.is_empty() {
-            if has_indent {
-                if let NodeData::Text { contents } = &children[pos - 1].data {
-                    let text = contents.borrow().to_string();
-                    if text.chars().all(|c| c.is_whitespace()) {
-                        children.remove(pos - 1);
-                        children.remove(pos - 1);
-                    } else if let Some(last_nl) = text.rfind('\n') {
-                        let trimmed = &text[..=last_nl];
-                        contents.replace(StrTendril::from_str(trimmed).unwrap());
-                        children.remove(pos);
-                    } else {
-                        children.remove(pos);
-                    }
-                } else {
+                    children.remove(pos - 1);
+                    children.remove(pos - 1);
+                } else if let Some(nl) = text.rfind('\n') {
+                    contents.replace(StrTendril::from_str(&text[..=nl]).unwrap());
                     children.remove(pos);
                 }
-            } else {
-                children.remove(pos);
             }
         } else {
             children.remove(pos);
-            for (i, new_node) in new_nodes.iter().enumerate() {
-                new_node.parent.set(Some(node_parent_weak.clone()));
-                children.insert(pos + i, new_node.clone());
-            }
+        }
+    } else {
+        // Replacing node with new nodes
+        children.remove(pos);
+        for (i, new_node) in new_nodes.iter().enumerate() {
+            new_node.parent.set(Some(node_parent_weak.clone()));
+            children.insert(pos + i, new_node.clone());
         }
     }
 }
@@ -304,73 +287,60 @@ fn process_directives(
     let directive_else = find_and_remove_directive(attrs, "v-else");
     let directive_for = find_and_remove_directive(attrs, "v-for");
 
-    // if
+    // Helper to expand and traverse targets
+    let render_targets = |node: &Handle, engine: &mut Engine| {
+        let targets = expand_targets(node);
+        for target in &targets {
+            traverse(target, engine);
+        }
+        targets
+    };
+
+    // v-if
     if let Some(expr) = directive_if {
         *in_if_chain = true;
-
-        if engine.eval_bool(&expr).unwrap_or(false) {
-            *if_chain_hit = true;
-            let targets = expand_targets(node);
-            for target in targets.iter() {
-                traverse(target, engine);
-            }
-            return Some(targets);
+        *if_chain_hit = engine.eval_bool(&expr).unwrap_or(false);
+        return Some(if *if_chain_hit {
+            render_targets(node, engine)
         } else {
-            *if_chain_hit = false;
-            return Some(Vec::new());
-        }
+            Vec::new()
+        });
     }
 
-    // else-if
+    // v-else-if
     if let Some(expr) = directive_elif {
         if !*in_if_chain {
             return None;
         }
-
         if *if_chain_hit {
             return Some(Vec::new());
         }
-
-        if engine.eval_bool(&expr).unwrap_or(false) {
-            *if_chain_hit = true;
-            let targets = expand_targets(node);
-            for target in targets.iter() {
-                traverse(target, engine);
-            }
-            return Some(targets);
+        *if_chain_hit = engine.eval_bool(&expr).unwrap_or(false);
+        return Some(if *if_chain_hit {
+            render_targets(node, engine)
         } else {
-            *if_chain_hit = false;
-            return Some(Vec::new());
-        }
+            Vec::new()
+        });
     }
 
-    // else
+    // v-else
     if directive_else.is_some() {
         if !*in_if_chain {
             return None;
         }
         *in_if_chain = false;
-
-        if *if_chain_hit {
-            return Some(Vec::new());
-        }
-
-        *if_chain_hit = true;
-        let targets = expand_targets(node);
-        for target in targets.iter() {
-            traverse(target, engine);
-        }
-        return Some(targets);
+        return Some(if *if_chain_hit {
+            Vec::new()
+        } else {
+            *if_chain_hit = true;
+            render_targets(node, engine)
+        });
     }
 
     *in_if_chain = false;
 
-    // for
-    if let Some(expr) = directive_for {
-        return Some(process_for(node, engine, &expr).unwrap_or_default());
-    }
-
-    None
+    // v-for
+    directive_for.map(|expr| process_for(node, engine, &expr).unwrap_or_default())
 }
 
 // Process for directive
@@ -386,7 +356,6 @@ fn process_for(node: &Handle, engine: &mut Engine, expr: &str) -> Option<Vec<Han
     };
 
     let val_iden = syntax.name("val")?;
-
     let indent_opt = get_indent(node);
     let mut result_nodes = Vec::new();
 
@@ -411,54 +380,7 @@ fn process_for(node: &Handle, engine: &mut Engine, expr: &str) -> Option<Vec<Han
                     engine.set_val(key_iden.as_str(), JsValue::new(index.get()));
                 }
 
-                let targets = expand_targets(node);
-                if targets.is_empty() {
-                    engine.exit_scope();
-                    continue;
-                }
-
-                let mut iteration_nodes = Vec::new();
-                for (target_idx, target) in targets.into_iter().enumerate() {
-                    let mut dummy_in_chain = false;
-                    let mut dummy_hit = false;
-                    let replacement =
-                        process_directives(&target, engine, &mut dummy_in_chain, &mut dummy_hit);
-
-                    match replacement {
-                        Some(new_nodes) => {
-                            for (idx, new_node) in new_nodes.iter().enumerate() {
-                                if ((target_idx > 0 && idx == 0 && !iteration_nodes.is_empty())
-                                    || idx > 0)
-                                    && !is_whitespace_text_node(new_node)
-                                    && let Some(indent) = &indent_opt
-                                {
-                                    iteration_nodes.push(create_text_node(indent));
-                                }
-                                traverse(new_node, engine);
-                                iteration_nodes.push(new_node.clone());
-                            }
-                        }
-                        None => {
-                            if target_idx > 0
-                                && !iteration_nodes.is_empty()
-                                && let Some(indent) = &indent_opt
-                            {
-                                iteration_nodes.push(create_text_node(indent));
-                            }
-                            traverse(&target, engine);
-                            iteration_nodes.push(target);
-                        }
-                    }
-                }
-
-                if !iteration_nodes.is_empty() {
-                    if !result_nodes.is_empty()
-                        && let Some(indent) = &indent_opt
-                    {
-                        result_nodes.push(create_text_node(indent));
-                    }
-                    result_nodes.extend(iteration_nodes);
-                }
+                process_for_iteration(node, engine, &indent_opt, &mut result_nodes);
 
                 engine.exit_scope();
             }
@@ -483,54 +405,7 @@ fn process_for(node: &Handle, engine: &mut Engine, expr: &str) -> Option<Vec<Han
                     engine.set_val(idx_iden.as_str(), JsValue::new(idx as i32));
                 }
 
-                let targets = expand_targets(node);
-                if targets.is_empty() {
-                    engine.exit_scope();
-                    continue;
-                }
-
-                let mut iteration_nodes = Vec::new();
-                for (target_idx, target) in targets.into_iter().enumerate() {
-                    let mut dummy_in_chain = false;
-                    let mut dummy_hit = false;
-                    let replacement =
-                        process_directives(&target, engine, &mut dummy_in_chain, &mut dummy_hit);
-
-                    match replacement {
-                        Some(new_nodes) => {
-                            for (idx, new_node) in new_nodes.iter().enumerate() {
-                                if ((target_idx > 0 && idx == 0 && !iteration_nodes.is_empty())
-                                    || idx > 0)
-                                    && !is_whitespace_text_node(new_node)
-                                    && let Some(indent) = &indent_opt
-                                {
-                                    iteration_nodes.push(create_text_node(indent));
-                                }
-                                traverse(new_node, engine);
-                                iteration_nodes.push(new_node.clone());
-                            }
-                        }
-                        None => {
-                            if target_idx > 0
-                                && !iteration_nodes.is_empty()
-                                && let Some(indent) = &indent_opt
-                            {
-                                iteration_nodes.push(create_text_node(indent));
-                            }
-                            traverse(&target, engine);
-                            iteration_nodes.push(target);
-                        }
-                    }
-                }
-
-                if !iteration_nodes.is_empty() {
-                    if !result_nodes.is_empty()
-                        && let Some(indent) = &indent_opt
-                    {
-                        result_nodes.push(create_text_node(indent));
-                    }
-                    result_nodes.extend(iteration_nodes);
-                }
+                process_for_iteration(node, engine, &indent_opt, &mut result_nodes);
 
                 engine.exit_scope();
             }
@@ -541,28 +416,83 @@ fn process_for(node: &Handle, engine: &mut Engine, expr: &str) -> Option<Vec<Han
     Some(result_nodes)
 }
 
+// Process a single iteration of v-for
+fn process_for_iteration(
+    node: &Handle,
+    engine: &mut Engine,
+    indent_opt: &Option<String>,
+    result_nodes: &mut Vec<Handle>,
+) {
+    let targets = expand_targets(node);
+    if targets.is_empty() {
+        engine.exit_scope();
+        return;
+    }
+
+    let mut iteration_nodes = Vec::new();
+    for (target_idx, target) in targets.into_iter().enumerate() {
+        let mut dummy_in_chain = false;
+        let mut dummy_hit = false;
+        let replacement = process_directives(&target, engine, &mut dummy_in_chain, &mut dummy_hit);
+
+        match replacement {
+            Some(new_nodes) => {
+                for (idx, new_node) in new_nodes.iter().enumerate() {
+                    if ((target_idx > 0 && idx == 0 && !iteration_nodes.is_empty()) || idx > 0)
+                        && !is_whitespace_text_node(new_node)
+                        && let Some(indent) = indent_opt
+                    {
+                        iteration_nodes.push(create_text_node(indent));
+                    }
+                    traverse(new_node, engine);
+                    iteration_nodes.push(new_node.clone());
+                }
+            }
+            None => {
+                if target_idx > 0
+                    && !iteration_nodes.is_empty()
+                    && let Some(indent) = indent_opt
+                {
+                    iteration_nodes.push(create_text_node(indent));
+                }
+                traverse(&target, engine);
+                iteration_nodes.push(target);
+            }
+        }
+    }
+
+    if !iteration_nodes.is_empty() {
+        if !result_nodes.is_empty()
+            && let Some(indent) = indent_opt
+        {
+            result_nodes.push(create_text_node(indent));
+        }
+        result_nodes.extend(iteration_nodes);
+    }
+}
+
 fn expand_targets(node: &Handle) -> Vec<Handle> {
     if let NodeData::Element {
         template_contents, ..
     } = &node.data
         && let Some(tc) = template_contents.borrow().as_ref()
     {
-        let template_indent = get_indent(node)
-            .map(|s| s.chars().filter(|c| *c == ' ').count())
-            .unwrap_or(0);
-
+        let count_spaces = |s: &String| s.chars().filter(|c| *c == ' ').count();
+        let template_indent = get_indent(node).as_ref().map(count_spaces).unwrap_or(0);
         let first_child_indent = tc
             .children
             .borrow()
             .iter()
             .find(|c| !is_whitespace_text_node(c))
             .and_then(get_indent)
-            .map(|s| s.chars().filter(|c| *c == ' ').count())
+            .as_ref()
+            .map(count_spaces)
             .unwrap_or(0);
 
         let indent_adjustment = template_indent as isize - first_child_indent as isize;
 
-        tc.children
+        return tc
+            .children
             .borrow()
             .iter()
             .filter(|c| !is_whitespace_text_node(c))
@@ -574,12 +504,12 @@ fn expand_targets(node: &Handle) -> Vec<Handle> {
                 }
                 cloned
             })
-            .collect()
-    } else {
-        let cloned = clone_node(node);
-        cloned.parent.take();
-        vec![cloned]
+            .collect();
     }
+
+    let cloned = clone_node(node);
+    cloned.parent.take();
+    vec![cloned]
 }
 
 fn find_and_remove_directive(
@@ -671,14 +601,14 @@ fn get_indent(node: &Handle) -> Option<String> {
     }
 
     if let NodeData::Text { contents } = &children[pos - 1].data {
-        let text = contents.borrow().to_string();
+        let text = contents.borrow();
         if let Some(last_nl) = text.rfind('\n') {
-            return Some(
-                text[last_nl..]
-                    .chars()
-                    .map(|char| if char == '\n' { '\n' } else { ' ' })
-                    .collect::<String>(),
-            );
+            let indent_text = &text[last_nl..];
+            let mut result = String::with_capacity(indent_text.len());
+            for ch in indent_text.chars() {
+                result.push(if ch == '\n' { '\n' } else { ' ' });
+            }
+            return Some(result);
         }
     }
     None
@@ -707,20 +637,28 @@ fn adjust_indent_in_subtree(node: &Handle, indent_adjustment: isize) {
 }
 
 fn adjust_text_indent(text: &str, adjustment: isize) -> String {
-    text.split('\n')
-        .enumerate()
-        .map(|(i, line)| {
-            if i == 0 {
-                line.to_string()
-            } else {
-                let spaces = line.chars().take_while(|c| *c == ' ').count();
-                let new_spaces = (spaces as isize + adjustment).max(0) as usize;
-                let rest = line.trim_start();
-                format!("{}{}", " ".repeat(new_spaces), rest)
+    if adjustment == 0 {
+        return text.to_string();
+    }
+
+    let mut result = String::new();
+    for (i, line) in text.split('\n').enumerate() {
+        if i == 0 {
+            result.push_str(line);
+        } else {
+            result.push('\n');
+
+            let spaces = line.chars().take_while(|c| *c == ' ').count();
+            let new_spaces = (spaces as isize + adjustment).max(0) as usize;
+            let rest = &line[spaces..];
+
+            for _ in 0..new_spaces {
+                result.push(' ');
             }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+            result.push_str(rest);
+        }
+    }
+    result
 }
 
 fn create_text_node(text: &str) -> Handle {
