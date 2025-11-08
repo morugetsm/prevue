@@ -10,7 +10,7 @@ An HTML templating engine that uses [Vue](https://github.com/vuejs/core)'s [temp
 
 ```toml
 [dependencies]
-prevue = "0.0.3"
+prevue = "0.0.4"
 ```
 
 
