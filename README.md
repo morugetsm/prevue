@@ -67,7 +67,7 @@ let output = render(html, data).unwrap();
 | `v-if` | ✅ |  |
 | `v-else` | ✅ |  |
 | `v-else-if` | ✅ |  |
-| `v-for` | 🟡 | Array and Object only |
+| `v-for` | ✅ |  |
 | `v-text`, `v-html` | ❌ |  |
 | `v-pre` | ✅ |  |
 

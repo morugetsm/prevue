@@ -410,6 +410,40 @@ fn process_for(node: &Handle, engine: &mut Engine, expr: &str) -> Option<Vec<Han
                 engine.exit_scope();
             }
         }
+        Ok(JsVariant::Integer32(val)) => {
+            for (idx, num) in (1..=val).enumerate() {
+                if engine.enter_scope().is_err() {
+                    continue;
+                }
+
+                engine.set_val(val_iden.as_str(), JsValue::new(num));
+
+                if let Some(key_iden) = syntax.name("key") {
+                    engine.set_val(key_iden.as_str(), JsValue::new(idx));
+                }
+
+                process_for_iteration(node, engine, &indent_opt, &mut result_nodes);
+
+                engine.exit_scope();
+            }
+        }
+        Ok(JsVariant::String(val)) => {
+            for (idx, ch) in val.to_std_string_escaped().chars().enumerate() {
+                if engine.enter_scope().is_err() {
+                    continue;
+                }
+
+                engine.set_val(val_iden.as_str(), JsValue::new(ch));
+
+                if let Some(key_iden) = syntax.name("key") {
+                    engine.set_val(key_iden.as_str(), JsValue::new(idx));
+                }
+
+                process_for_iteration(node, engine, &indent_opt, &mut result_nodes);
+
+                engine.exit_scope();
+            }
+        }
         _ => {}
     }
 

@@ -359,3 +359,173 @@ fn test_for_with_leading_polluted() {
     </body></html>"#;
     assert_eq!(output, expected);
 }
+
+#[test]
+fn test_for_number_literal() {
+    let input = r#"
+    <div>
+        <div v-for="item in 5">{{ item }}</div>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <div>1</div>
+        <div>2</div>
+        <div>3</div>
+        <div>4</div>
+        <div>5</div>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_for_number_variable() {
+    let input = r#"
+    <div>
+        <div v-for="item in user.age">{{ item }}</div>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <div>1</div>
+        <div>2</div>
+        <div>3</div>
+        <div>4</div>
+        <div>5</div>
+        <div>6</div>
+        <div>7</div>
+        <div>8</div>
+        <div>9</div>
+        <div>10</div>
+        <div>11</div>
+        <div>12</div>
+        <div>13</div>
+        <div>14</div>
+        <div>15</div>
+        <div>16</div>
+        <div>17</div>
+        <div>18</div>
+        <div>19</div>
+        <div>20</div>
+        <div>21</div>
+        <div>22</div>
+        <div>23</div>
+        <div>24</div>
+        <div>25</div>
+        <div>26</div>
+        <div>27</div>
+        <div>28</div>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_for_number_with_index() {
+    let input = r#"
+    <div>
+        <div v-for="item, index in 3">{{ `${index}: ${item}` }}</div>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <div>0: 1</div>
+        <div>1: 2</div>
+        <div>2: 3</div>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_for_number_zero() {
+    let input = r#"
+    <div>
+        <div v-for="item in 0">{{ item }}</div>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_for_string_literal() {
+    let input = r#"
+    <div>
+        <div v-for="char in 'abc'">{{ char }}</div>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <div>a</div>
+        <div>b</div>
+        <div>c</div>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_for_string_variable() {
+    let input = r#"
+    <div>
+        <div v-for="char in user.value">{{ char }}</div>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <div>M</div>
+        <div>o</div>
+        <div>r</div>
+        <div>r</div>
+        <div>i</div>
+        <div>s</div>
+        <div>o</div>
+        <div>n</div>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_for_string_with_index() {
+    let input = r#"
+    <div>
+        <div v-for="char, index in 'xyz'">{{ `${index}: ${char}` }}</div>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <div>0: x</div>
+        <div>1: y</div>
+        <div>2: z</div>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_for_string_empty() {
+    let input = r#"
+    <div>
+        <div v-for="char in ''">{{ char }}</div>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
