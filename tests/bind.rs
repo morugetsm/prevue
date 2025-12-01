@@ -72,6 +72,24 @@ fn test_bind_dynamic() {
 }
 
 #[test]
+fn test_bind_dynamic_unclosed() {
+    let input = r#"
+    <div>
+        <h1 v-bind:[id="id">h1 elem</h1>
+        <h2 :value]="value">h2 elem</h2>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <h1 [id="id-value">h1 elem</h1>
+        <h2 value]="333">h2 elem</h2>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
 fn test_bind_dynamic_shorthand() {
     // dynamic shorthand should not be supported
     let input = r#"

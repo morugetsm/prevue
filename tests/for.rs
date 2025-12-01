@@ -38,6 +38,24 @@ fn test_for_array() {
 }
 
 #[test]
+fn test_for_array_of() {
+    let input = r#"
+    <div>
+        <div v-for="item of list">{{ item }}</div>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <div>1</div>
+        <div>2</div>
+        <div>3</div>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
 fn test_for_array_literal() {
     let input = r#"
     <div>
@@ -229,6 +247,24 @@ fn test_for_expression() {
         <div>1</div>
         <div>2</div>
         <div>3</div>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_for_binding() {
+    let input = r#"
+    <div>
+        <div v-for="$, _ in list">{{ `${_}: ${$}` }}</div>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <div>0: 1</div>
+        <div>1: 2</div>
+        <div>2: 3</div>
     </div>
     </body></html>"#;
     assert_eq!(output, expected);

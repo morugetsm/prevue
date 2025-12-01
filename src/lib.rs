@@ -18,12 +18,11 @@ use engine::Engine;
 
 static SYNTAX_MUSTACHE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\{\{\s*(.+?)\s*\}\}").unwrap());
-static SYNTAX_BIND_ARG: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"^(?:(?:v-bind:)|:)(?P<arg>\[[^\]]+\]|[A-Za-z_][A-Za-z0-9_\-:]*)$"#).unwrap()
-});
+static SYNTAX_BIND: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(?:v-bind:|:)(?<arg>.+)$").unwrap());
 static SYNTAX_FOR: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"^\s*(?<val>\w+)\s*(?:,\s*(?<key>\w+)\s*(?:,\s*(?<idx>\w+)\s*)?)?\s+in\s+(?<iter>.+)\s*$",
+        r"^\s*(?<val>[\p{XID_Start}_$]\p{XID_Continue}*)\s*(?:,\s*(?<key>[\p{XID_Start}_$]\p{XID_Continue}*)\s*(?:,\s*(?<idx>[\p{XID_Start}_$]\p{XID_Continue}*)\s*)?)?\s+(?:in|of)\s+(?<iter>.+)\s*$",
     )
     .unwrap()
 });
@@ -119,7 +118,7 @@ fn hydrate_node(handle: &Handle, engine: &mut Engine) {
                 }
 
                 // v-bind argument syntax: :attr="value" or v-bind:attr="value"
-                if let Some(caps) = SYNTAX_BIND_ARG.captures(name_ref) {
+                if let Some(caps) = SYNTAX_BIND.captures(name_ref) {
                     let arg_raw = caps.name("arg").map(|m| m.as_str()).unwrap_or("");
                     let value_expr = attr.value.trim();
 
