@@ -97,10 +97,52 @@ fn hydrate_node(handle: &Handle, engine: &mut Engine) {
 
                 if name_ref == "v-text" {
                     if let Some(value) = engine.eval_str(attr.value.as_ref()) {
+                        let has_following_text_sibling = {
+                            if let Some(parent_weak) = handle.parent.take() {
+                                handle.parent.set(Some(parent_weak.clone()));
+                                parent_weak.upgrade().is_some_and(|parent| {
+                                    let children = parent.children.borrow();
+                                    children
+                                        .iter()
+                                        .position(|c| Rc::ptr_eq(c, handle))
+                                        .and_then(|pos| children.get(pos + 1))
+                                        .is_some_and(|next| {
+                                            matches!(&next.data, NodeData::Text { .. })
+                                        })
+                                })
+                            } else {
+                                false
+                            }
+                        };
+
+                        let children_to_move: Vec<Handle> = if has_following_text_sibling {
+                            Vec::new()
+                        } else {
+                            handle.children.borrow().iter().cloned().collect()
+                        };
+
                         let mut children = handle.children.borrow_mut();
                         *children = vec![Node::new(NodeData::Text {
                             contents: RefCell::new(StrTendril::from_str(&value).unwrap()),
                         })];
+                        drop(children);
+
+                        if !children_to_move.is_empty()
+                            && let Some(parent_weak) = handle.parent.take()
+                        {
+                            handle.parent.set(Some(parent_weak.clone()));
+                            if let Some(parent) = parent_weak.upgrade() {
+                                let mut parent_children = parent.children.borrow_mut();
+                                if let Some(pos) =
+                                    parent_children.iter().position(|c| Rc::ptr_eq(c, handle))
+                                {
+                                    for (i, node) in children_to_move.iter().enumerate() {
+                                        node.parent.set(Some(parent_weak.clone()));
+                                        parent_children.insert(pos + 1 + i, node.clone());
+                                    }
+                                }
+                            }
+                        }
                     }
                     removals.push(i);
                     continue;
@@ -139,8 +181,8 @@ fn hydrate_node(handle: &Handle, engine: &mut Engine) {
                             continue;
                         }
                         let inner = &arg_raw[1..arg_raw.len() - 1];
-                        if let Some(resolved) = engine.eval_str(inner) {
-                            if let Some(value) = engine.eval_str(value_expr) {
+                        if let Some(resolved) = engine.eval_fmt(inner) {
+                            if let Some(value) = engine.eval_fmt(value_expr) {
                                 renames.push((i, resolved, value));
                             } else {
                                 removals.push(i);
@@ -150,9 +192,9 @@ fn hydrate_node(handle: &Handle, engine: &mut Engine) {
                         }
                     } else {
                         let value_opt = if value_expr.is_empty() {
-                            engine.eval_str(arg_raw)
+                            engine.eval_fmt(arg_raw)
                         } else {
-                            engine.eval_str(value_expr)
+                            engine.eval_fmt(value_expr)
                         };
                         if let Some(value) = value_opt {
                             renames.push((i, arg_raw.to_string(), value));
@@ -200,7 +242,7 @@ fn hydrate_node(handle: &Handle, engine: &mut Engine) {
                 .filter_map(|capture| {
                     let range = capture.get(0)?.range();
                     let expr = capture.get(1)?.as_str();
-                    Some((range, engine.eval_str(expr).unwrap_or_default()))
+                    Some((range, engine.eval_fmt(expr).unwrap_or_default()))
                 })
                 .collect();
 

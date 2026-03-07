@@ -41,7 +41,7 @@ fn test_array() {
 
     let expected = r#"<html><head></head><body><div>
         <p>Hello, world!</p>
-        <div>[1,2,3]</div>
+        <div>[ 1, 2, 3 ]</div>
     </div>
     </body></html>"#;
     assert_eq!(output, expected);
@@ -62,7 +62,7 @@ fn test_object() {
 
     let expected = r#"<html><head></head><body><div>
         <p>Hello, world!</p>
-        <div>{"label":"User","value":"Morrison","age":28}</div>
+        <div>{ "label": "User", "value": "Morrison", "age": 28 }</div>
         <div>User</div>
         <div>Morrison</div>
         <div>28</div>

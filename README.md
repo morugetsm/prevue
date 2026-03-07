@@ -61,14 +61,15 @@ let output = render(html, data).unwrap();
 
 | Syntax | Status | Notes |
 |---|---|---|
-| `{{ }}` | 🟡 | Array/Object stringify without spacing (e.g., `[1,2,3]` not `[ 1, 2, 3 ]`) |
+| `{{ }}` | ✅ |  |
 | `<template>` | ✅ |  |
 | `v-bind`, `:attr` | 🟡 | No class/style object binding |
 | `v-if` | ✅ |  |
 | `v-else` | ✅ |  |
 | `v-else-if` | ✅ |  |
 | `v-for` | ✅ |  |
-| `v-text`, `v-html` | ❌ |  |
+| `v-text` | ✅ |  |
+| `v-html` | ❌ |  |
 | `v-pre` | ✅ |  |
 
 

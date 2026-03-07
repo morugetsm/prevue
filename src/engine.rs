@@ -4,6 +4,7 @@ use boa_engine::{
     Context, JsResult, JsString, JsValue, JsVariant, Source, object::ObjectInitializer,
 };
 use serde::Serialize;
+use serde_json::Value as JsonValue;
 
 pub(crate) struct Engine {
     pub context: Context,
@@ -94,14 +95,71 @@ impl Engine {
     }
 
     pub fn eval_str(&mut self, code: &str) -> Option<String> {
+        fn to_str(val: &JsonValue) -> String {
+            match val {
+                JsonValue::Null => String::new(),
+                JsonValue::Bool(b) => b.to_string(),
+                JsonValue::Number(n) => n.to_string(),
+                JsonValue::String(s) => s.clone(),
+                JsonValue::Array(arr) => arr.iter().map(to_str).collect::<Vec<_>>().join(","),
+                JsonValue::Object(_) => "[object Object]".to_string(),
+            }
+        }
+
         let value = self.eval(code).ok()?;
         match value.variant() {
-            JsVariant::Null => None,
-            JsVariant::Undefined => None,
+            JsVariant::Null | JsVariant::Undefined => None,
+            JsVariant::String(val) => Some(val.to_std_string_escaped()),
+            JsVariant::Object(obj) if obj.is_array() => {
+                let json = value.to_json(&mut self.context).ok()??;
+                Some(
+                    json.as_array()?
+                        .iter()
+                        .map(to_str)
+                        .collect::<Vec<_>>()
+                        .join(","),
+                )
+            }
+            JsVariant::Object(_) => Some("[object Object]".to_string()),
+            _ => Some(value.display().to_string()),
+        }
+    }
+
+    pub fn eval_fmt(&mut self, code: &str) -> Option<String> {
+        fn fmt(val: &JsonValue) -> String {
+            match val {
+                JsonValue::Null => "null".to_string(),
+                JsonValue::Bool(b) => b.to_string(),
+                JsonValue::Number(n) => n.to_string(),
+                JsonValue::String(s) => format!("\"{}\"", s),
+                JsonValue::Array(arr) => {
+                    if arr.is_empty() {
+                        "[]".to_string()
+                    } else {
+                        format!("[ {} ]", arr.iter().map(fmt).collect::<Vec<_>>().join(", "))
+                    }
+                }
+                JsonValue::Object(obj) => {
+                    if obj.is_empty() {
+                        "{}".to_string()
+                    } else {
+                        let items: Vec<String> = obj
+                            .iter()
+                            .map(|(k, v)| format!("\"{}\": {}", k, fmt(v)))
+                            .collect();
+                        format!("{{ {} }}", items.join(", "))
+                    }
+                }
+            }
+        }
+
+        let value = self.eval(code).ok()?;
+        match value.variant() {
+            JsVariant::Null | JsVariant::Undefined => None,
             JsVariant::String(val) => Some(val.to_std_string_escaped()),
             JsVariant::Object(_) => {
                 let json = value.to_json(&mut self.context).ok()??;
-                Some(json.to_string())
+                Some(fmt(&json))
             }
             _ => Some(value.display().to_string()),
         }
