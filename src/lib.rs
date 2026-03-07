@@ -95,6 +95,17 @@ fn hydrate_node(handle: &Handle, engine: &mut Engine) {
             for (i, attr) in attrs.borrow().iter().enumerate() {
                 let name_ref: &str = attr.name.local.as_ref();
 
+                if name_ref == "v-text" {
+                    if let Some(value) = engine.eval_str(attr.value.as_ref()) {
+                        let mut children = handle.children.borrow_mut();
+                        *children = vec![Node::new(NodeData::Text {
+                            contents: RefCell::new(StrTendril::from_str(&value).unwrap()),
+                        })];
+                    }
+                    removals.push(i);
+                    continue;
+                }
+
                 // v-bind object syntax: v-bind="{ key: value }"
                 if name_ref == "v-bind" {
                     if let Ok(js_val) = engine.eval(attr.value.as_ref())
