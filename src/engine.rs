@@ -95,33 +95,16 @@ impl Engine {
     }
 
     pub fn eval_str(&mut self, code: &str) -> Option<String> {
-        fn to_str(val: &JsonValue) -> String {
-            match val {
-                JsonValue::Null => String::new(),
-                JsonValue::Bool(b) => b.to_string(),
-                JsonValue::Number(n) => n.to_string(),
-                JsonValue::String(s) => s.clone(),
-                JsonValue::Array(arr) => arr.iter().map(to_str).collect::<Vec<_>>().join(","),
-                JsonValue::Object(_) => "[object Object]".to_string(),
-            }
-        }
-
         let value = self.eval(code).ok()?;
         match value.variant() {
             JsVariant::Null | JsVariant::Undefined => None,
             JsVariant::String(val) => Some(val.to_std_string_escaped()),
-            JsVariant::Object(obj) if obj.is_array() => {
-                let json = value.to_json(&mut self.context).ok()??;
-                Some(
-                    json.as_array()?
-                        .iter()
-                        .map(to_str)
-                        .collect::<Vec<_>>()
-                        .join(","),
-                )
-            }
-            JsVariant::Object(_) => Some("[object Object]".to_string()),
-            _ => Some(value.display().to_string()),
+            _ => Some(
+                value
+                    .to_string(&mut self.context)
+                    .ok()?
+                    .to_std_string_escaped(),
+            ),
         }
     }
 
@@ -166,7 +149,6 @@ impl Engine {
     }
 
     pub fn eval_bool(&mut self, code: &str) -> Option<bool> {
-        let value = self.eval(code).ok()?;
-        Some(value.to_boolean())
+        Some(self.eval(code).ok()?.to_boolean())
     }
 }

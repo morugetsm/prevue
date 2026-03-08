@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 
 fn data() -> Value {
     json!({
-        "id": "id-value",
+        "id": "title",
         "value": 333,
         "attrs": {
             "str": "hello",
@@ -17,8 +17,11 @@ fn data() -> Value {
     })
 }
 
+// === Basic Binding ===
+
 #[test]
-fn test_bind() {
+fn test_bind_basic() {
+    // v-bind:attr="expr" (long form) and :attr="expr" (colon shorthand)
     let input = r#"
     <div>
         <h1 v-bind:id="id">h1 elem</h1>
@@ -28,7 +31,7 @@ fn test_bind() {
     let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
-        <h1 id="id-value">h1 elem</h1>
+        <h1 id="title">h1 elem</h1>
         <h2 value="333">h2 elem</h2>
     </div>
     </body></html>"#;
@@ -36,7 +39,8 @@ fn test_bind() {
 }
 
 #[test]
-fn test_bind_shorthand() {
+fn test_bind_same_name_shorthand() {
+    // :attr with no value uses the attribute name as the expression
     let input = r#"
     <div>
         <h1 v-bind:id>h1 elem</h1>
@@ -46,15 +50,18 @@ fn test_bind_shorthand() {
     let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
-        <h1 id="id-value">h1 elem</h1>
+        <h1 id="title">h1 elem</h1>
         <h2 value="333">foo</h2>
     </div>
     </body></html>"#;
     assert_eq!(output, expected);
 }
 
+// === Dynamic Key Binding ===
+
 #[test]
-fn test_bind_dynamic() {
+fn test_bind_dynamic_key() {
+    // :[expr]="value" — attribute name resolved from expression
     let input = r#"
     <div>
         <h1 v-bind:[id]="id">h1 elem</h1>
@@ -64,7 +71,7 @@ fn test_bind_dynamic() {
     let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
-        <h1 id-value="id-value">h1 elem</h1>
+        <h1 title="title">h1 elem</h1>
         <h2 333="333">h2 elem</h2>
     </div>
     </body></html>"#;
@@ -72,26 +79,8 @@ fn test_bind_dynamic() {
 }
 
 #[test]
-fn test_bind_dynamic_unclosed() {
-    let input = r#"
-    <div>
-        <h1 v-bind:[id="id">h1 elem</h1>
-        <h2 :value]="value">h2 elem</h2>
-    </div>
-    "#;
-    let output = render(input.to_string(), data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        <h1 [id="id-value">h1 elem</h1>
-        <h2 value]="333">h2 elem</h2>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
-}
-
-#[test]
-fn test_bind_dynamic_shorthand() {
-    // dynamic shorthand should not be supported
+fn test_bind_dynamic_key_no_value() {
+    // :[expr] with no value is not supported — attribute is removed
     let input = r#"
     <div>
         <h1 v-bind:[id]>h1 elem</h1>
@@ -109,7 +98,54 @@ fn test_bind_dynamic_shorthand() {
 }
 
 #[test]
-fn test_bind_eval() {
+fn test_bind_dynamic_key_unclosed() {
+    // malformed dynamic key (missing ] or [) falls through as a literal attr name
+    let input = r#"
+    <div>
+        <h1 v-bind:[id="id">h1 elem</h1>
+        <h2 :value]="value">h2 elem</h2>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <h1 [id="title">h1 elem</h1>
+        <h2 value]="333">h2 elem</h2>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_bind_dynamic_key_lowercase() {
+    // HTML5 lowercases attribute names, so camelCase dynamic keys silently fail
+    let input = r#"
+    <div>
+        <h1>{{ dynamicKey }}</h1>
+        <h2>{{ dynamic-key }}</h2>
+        <h3>{{ value }}</h3>
+        <h4 :[dynamicKey]="value">link</h4>
+        <h5 :[dynamic-key]="value">link</h5>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <h1>data-id</h1>
+        <h2></h2>
+        <h3>333</h3>
+        <h4>link</h4>
+        <h5>link</h5>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+// === Expression Values ===
+
+#[test]
+fn test_bind_expression() {
+    // attribute value can be any JS expression
     let input = r#"
     <div>
         <h1 :format="`hello ${id}`">h1 elem</h1>
@@ -119,7 +155,7 @@ fn test_bind_eval() {
     let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
-        <h1 format="hello id-value">h1 elem</h1>
+        <h1 format="hello title">h1 elem</h1>
         <h2 calc="666">h2 elem</h2>
     </div>
     </body></html>"#;
@@ -145,8 +181,11 @@ fn test_bind_statement() {
     assert_eq!(output, expected);
 }
 
+// === Null / Undefined ===
+
 #[test]
-fn test_bind_nullish() {
+fn test_bind_null_undefined() {
+    // null or undefined value removes the attribute entirely
     let input = r#"
     <div>
         <h1 :foo="null">h1 elem</h1>
@@ -163,8 +202,30 @@ fn test_bind_nullish() {
     assert_eq!(output, expected);
 }
 
+// === False ===
+
+#[test]
+fn test_bind_false_kept() {
+    // false keeps the attribute as "false" — only null/undefined remove it
+    let input = r#"
+    <div>
+        <h1 :foo="false">h1 elem</h1>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <h1 foo="false">h1 elem</h1>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+// === Object Syntax ===
+
 #[test]
 fn test_bind_object() {
+    // v-bind="obj" spreads object properties as attributes; null values are filtered out
     let input = r#"
     <div>
         <span v-bind="attrs"></span>
@@ -180,24 +241,17 @@ fn test_bind_object() {
 }
 
 #[test]
-fn test_attr_case_dynamic() {
+fn test_bind_object_overrides_existing_attr() {
+    // v-bind="obj" overrides a static attribute that shares the same name
     let input = r#"
     <div>
-        <h1>{{ dynamicKey }}</h1>
-        <h2>{{ dynamic-key }}</h2>
-        <h3>{{ value }}</h3>
-        <h4 :[dynamicKey]="value">link</h4>
-        <h5 :[dynamic-key]="value">link</h5>
+        <span str="old" v-bind="attrs">elem</span>
     </div>
     "#;
     let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
-        <h1>data-id</h1>
-        <h2></h2>
-        <h3>333</h3>
-        <h4>link</h4>
-        <h5>link</h5>
+        <span str="hello" num="123" truthy="true" falsy="false">elem</span>
     </div>
     </body></html>"#;
     assert_eq!(output, expected);

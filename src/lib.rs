@@ -9,7 +9,7 @@ use markup5ever_rcdom::{Handle, Node, NodeData, RcDom, SerializableHandle};
 use regex::Regex;
 use serde::Serialize;
 use std::cell::RefCell;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::str::FromStr;
 use std::sync::LazyLock;
 
@@ -45,12 +45,12 @@ pub fn render(html: String, data: impl Serialize) -> Result<String, anyhow::Erro
         .from_utf8()
         .read_from(&mut html.as_bytes())?;
     let mut engine = Engine::new(data);
-    traverse(&dom.document.clone(), &mut engine);
+    traverse(&Rc::clone(&dom.document), &mut engine);
 
     let mut buffer = Vec::new();
     serialize(
         &mut buffer,
-        &SerializableHandle::from(dom.document.clone()),
+        &SerializableHandle::from(Rc::clone(&dom.document)),
         Default::default(),
     )?;
 
@@ -99,7 +99,7 @@ fn hydrate_node(handle: &Handle, engine: &mut Engine) {
                     if let Some(value) = engine.eval_str(attr.value.as_ref()) {
                         let has_following_text_sibling = {
                             if let Some(parent_weak) = handle.parent.take() {
-                                handle.parent.set(Some(parent_weak.clone()));
+                                handle.parent.set(Some(Weak::clone(&parent_weak)));
                                 parent_weak.upgrade().is_some_and(|parent| {
                                     let children = parent.children.borrow();
                                     children
@@ -130,15 +130,15 @@ fn hydrate_node(handle: &Handle, engine: &mut Engine) {
                         if !children_to_move.is_empty()
                             && let Some(parent_weak) = handle.parent.take()
                         {
-                            handle.parent.set(Some(parent_weak.clone()));
+                            handle.parent.set(Some(Weak::clone(&parent_weak)));
                             if let Some(parent) = parent_weak.upgrade() {
                                 let mut parent_children = parent.children.borrow_mut();
                                 if let Some(pos) =
                                     parent_children.iter().position(|c| Rc::ptr_eq(c, handle))
                                 {
                                     for (i, node) in children_to_move.iter().enumerate() {
-                                        node.parent.set(Some(parent_weak.clone()));
-                                        parent_children.insert(pos + 1 + i, node.clone());
+                                        node.parent.set(Some(Weak::clone(&parent_weak)));
+                                        parent_children.insert(pos + 1 + i, Rc::clone(node));
                                     }
                                 }
                             }
@@ -158,11 +158,10 @@ fn hydrate_node(handle: &Handle, engine: &mut Engine) {
                             if val.is_null() {
                                 continue;
                             }
-                            let value_str = if val.is_string() {
-                                val.as_str().unwrap_or("").to_string()
-                            } else {
-                                val.to_string()
-                            };
+                            let value_str = val
+                                .as_str()
+                                .map(str::to_string)
+                                .unwrap_or_else(|| val.to_string());
                             additions.push((key.clone(), attr.name.clone(), value_str));
                         }
                         removals.push(i);
@@ -181,25 +180,19 @@ fn hydrate_node(handle: &Handle, engine: &mut Engine) {
                             continue;
                         }
                         let inner = &arg_raw[1..arg_raw.len() - 1];
-                        if let Some(resolved) = engine.eval_fmt(inner) {
-                            if let Some(value) = engine.eval_fmt(value_expr) {
-                                renames.push((i, resolved, value));
-                            } else {
-                                removals.push(i);
-                            }
-                        } else {
-                            removals.push(i);
+                        match (engine.eval_fmt(inner), engine.eval_fmt(value_expr)) {
+                            (Some(resolved), Some(value)) => renames.push((i, resolved, value)),
+                            _ => removals.push(i),
                         }
                     } else {
-                        let value_opt = if value_expr.is_empty() {
-                            engine.eval_fmt(arg_raw)
+                        let target = if value_expr.is_empty() {
+                            arg_raw
                         } else {
-                            engine.eval_fmt(value_expr)
+                            value_expr
                         };
-                        if let Some(value) = value_opt {
-                            renames.push((i, arg_raw.to_string(), value));
-                        } else {
-                            removals.push(i);
+                        match engine.eval_fmt(target) {
+                            Some(value) => renames.push((i, arg_raw.to_string(), value)),
+                            None => removals.push(i),
                         }
                     }
                 }
@@ -246,9 +239,11 @@ fn hydrate_node(handle: &Handle, engine: &mut Engine) {
                 })
                 .collect();
 
-            for (range, evaluated) in replacements.iter().rev() {
+            if !replacements.is_empty() {
                 let mut text_value = content.to_string();
-                text_value.replace_range(range.clone(), evaluated);
+                for (range, evaluated) in replacements.iter().rev() {
+                    text_value.replace_range(range.clone(), evaluated);
+                }
                 *content = StrTendril::from_str(&text_value).unwrap();
             }
         }
@@ -261,7 +256,7 @@ fn replace_in_children_source(node: &Handle, new_nodes: &[Handle]) {
     let Some(node_parent_weak) = node.parent.take() else {
         return;
     };
-    node.parent.set(Some(node_parent_weak.clone()));
+    node.parent.set(Some(Weak::clone(&node_parent_weak)));
     let Some(node_parent) = node_parent_weak.upgrade() else {
         return;
     };
@@ -304,8 +299,8 @@ fn replace_in_children_source(node: &Handle, new_nodes: &[Handle]) {
         // Replacing node with new nodes
         children.remove(pos);
         for (i, new_node) in new_nodes.iter().enumerate() {
-            new_node.parent.set(Some(node_parent_weak.clone()));
-            children.insert(pos + i, new_node.clone());
+            new_node.parent.set(Some(Weak::clone(&node_parent_weak)));
+            children.insert(pos + i, Rc::clone(new_node));
         }
     }
 }
@@ -511,7 +506,6 @@ fn process_for_iteration(
 ) {
     let targets = expand_targets(node);
     if targets.is_empty() {
-        engine.exit_scope();
         return;
     }
 
@@ -531,7 +525,7 @@ fn process_for_iteration(
                         iteration_nodes.push(create_text_node(indent));
                     }
                     traverse(new_node, engine);
-                    iteration_nodes.push(new_node.clone());
+                    iteration_nodes.push(Rc::clone(new_node));
                 }
             }
             None => {
@@ -603,12 +597,10 @@ fn find_and_remove_directive(
     name: &str,
 ) -> Option<String> {
     let mut attrs_mut = attrs.borrow_mut();
-    if let Some(pos) = attrs_mut.iter().position(|a| a.name.local.as_ref() == name) {
-        let attr = attrs_mut.remove(pos);
-        Some(attr.value.to_string())
-    } else {
-        None
-    }
+    let pos = attrs_mut
+        .iter()
+        .position(|a| a.name.local.as_ref() == name)?;
+    Some(attrs_mut.remove(pos).value.to_string())
 }
 
 fn clone_node(node: &Handle) -> Handle {
@@ -647,14 +639,11 @@ fn clone_node(node: &Handle) -> Handle {
             template_contents,
             mathml_annotation_xml_integration_point,
         } => {
-            let cloned_template_contents =
-                if let Some(template_content) = template_contents.borrow().as_ref() {
-                    let template_clone = Node::new(NodeData::Document);
-                    clone_children(template_content, &template_clone);
-                    Some(template_clone)
-                } else {
-                    None
-                };
+            let cloned_template_contents = template_contents.borrow().as_ref().map(|tc| {
+                let clone = Node::new(NodeData::Document);
+                clone_children(tc, &clone);
+                clone
+            });
 
             let cloned = Node::new(NodeData::Element {
                 name: name.clone(),
@@ -676,7 +665,7 @@ fn clone_node(node: &Handle) -> Handle {
 
 fn get_indent(node: &Handle) -> Option<String> {
     let parent_weak = node.parent.take()?;
-    node.parent.set(Some(parent_weak.clone()));
+    node.parent.set(Some(Weak::clone(&parent_weak)));
     let parent = parent_weak.upgrade()?;
 
     let children = parent.children.borrow();
@@ -690,11 +679,12 @@ fn get_indent(node: &Handle) -> Option<String> {
         let text = contents.borrow();
         if let Some(last_nl) = text.rfind('\n') {
             let indent_text = &text[last_nl..];
-            let mut result = String::with_capacity(indent_text.len());
-            for ch in indent_text.chars() {
-                result.push(if ch == '\n' { '\n' } else { ' ' });
-            }
-            return Some(result);
+            return Some(
+                indent_text
+                    .chars()
+                    .map(|c| if c == '\n' { '\n' } else { ' ' })
+                    .collect(),
+            );
         }
     }
     None
@@ -737,10 +727,7 @@ fn adjust_text_indent(text: &str, adjustment: isize) -> String {
             let spaces = line.chars().take_while(|c| *c == ' ').count();
             let new_spaces = (spaces as isize + adjustment).max(0) as usize;
             let rest = &line[spaces..];
-
-            for _ in 0..new_spaces {
-                result.push(' ');
-            }
+            result.push_str(&" ".repeat(new_spaces));
             result.push_str(rest);
         }
     }

@@ -289,7 +289,7 @@ fn test_text_array_explicit_close() {
 }
 
 #[test]
-fn test_text_array_with_format() {
+fn test_text_array_vs_mustache() {
     let input = r#"
     <div>
         <p v-text="arr" />
@@ -324,7 +324,7 @@ fn test_text_array_mixed() {
 }
 
 #[test]
-fn test_text_array_mixed_with_format() {
+fn test_text_array_mixed_vs_mustache() {
     let input = r#"
     <div>
         <p v-text="mixed_arr" />
@@ -359,7 +359,7 @@ fn test_text_object() {
 }
 
 #[test]
-fn test_text_object_with_format() {
+fn test_text_object_vs_mustache() {
     let input = r#"
     <div>
         <p v-text="obj" />
@@ -394,7 +394,7 @@ fn test_text_object_mixed() {
 }
 
 #[test]
-fn test_text_object_mixed_with_format() {
+fn test_text_object_mixed_vs_mustache() {
     let input = r#"
     <div>
         <p v-text="mixed_obj" />
