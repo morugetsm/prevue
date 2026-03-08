@@ -17,7 +17,7 @@ mod engine;
 use engine::Engine;
 
 static SYNTAX_MUSTACHE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\{\{\s*(.+?)\s*\}\}").unwrap());
+    LazyLock::new(|| Regex::new(r"(?s)\{\{\s*(.+?)\s*\}\}").unwrap());
 static SYNTAX_BIND: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(?:v-bind:|:)(?<arg>.+)$").unwrap());
 static SYNTAX_FOR: LazyLock<Regex> = LazyLock::new(|| {

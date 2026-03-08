@@ -4,11 +4,9 @@ use serde_json::{Value, json};
 fn data() -> Value {
     json!({
         "list": [1, 2, 3],
-        "number": 9999,
         "user": {
-            "label": "User",
-            "value": "Morrison",
-            "age": 28
+            "name": "Alice",
+            "age": 21
         },
     })
 }
