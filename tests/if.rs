@@ -6,7 +6,7 @@ fn data() -> Value {
         "list": [1, 2, 3],
         "user": {
             "name": "Alice",
-            "age": 28
+            "age": 21
         },
     })
 }
@@ -88,7 +88,7 @@ fn test_if_expression() {
     let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
-        <p>Alice (28)</p>
+        <p>Alice (21)</p>
     </div>
     </body></html>"#;
     assert_eq!(output, expected);
