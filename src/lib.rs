@@ -280,15 +280,22 @@ fn replace_in_children_source(node: &Handle, new_nodes: &[Handle]) {
     };
 
     if new_nodes.is_empty() {
-        // Removing node: also remove preceding indent if present
         if has_indent_before {
             if let NodeData::Text { contents } = &children[pos - 1].data {
                 let text = contents.borrow().to_string();
-                if text.chars().all(|c| c.is_whitespace()) {
+                if let Some(nl) = text.rfind('\n') {
+                    let before_nl = &text[..nl];
+                    if before_nl.is_empty() {
+                        children.remove(pos - 1);
+                        children.remove(pos - 1);
+                    } else {
+                        contents.replace(StrTendril::from_str(before_nl).unwrap());
+                        children.remove(pos);
+                    }
+                } else if text.chars().all(|c| c.is_whitespace()) {
                     children.remove(pos - 1);
                     children.remove(pos - 1);
-                } else if let Some(nl) = text.rfind('\n') {
-                    contents.replace(StrTendril::from_str(&text[..=nl]).unwrap());
+                } else {
                     children.remove(pos);
                 }
             }
