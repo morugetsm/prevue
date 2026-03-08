@@ -8,9 +8,8 @@ An HTML templating engine that uses [Vue](https://github.com/vuejs/core)'s [temp
 
 ## Installation
 
-```toml
-[dependencies]
-prevue = "0.0.6"
+```bash
+cargo add prevue
 ```
 
 
