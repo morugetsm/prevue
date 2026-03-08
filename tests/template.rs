@@ -14,8 +14,10 @@ fn data() -> Value {
     })
 }
 
+// === Basic Behavior ===
+
 #[test]
-fn test_template() {
+fn test_template_basic() {
     let input = r#"
     <div>
         <template>Hello</template>
@@ -29,6 +31,8 @@ fn test_template() {
     </body></html>"#;
     assert_eq!(output, expected);
 }
+
+// === v-if ===
 
 #[test]
 fn test_template_if() {
@@ -45,6 +49,26 @@ fn test_template_if() {
     </body></html>"#;
     assert_eq!(output, expected);
 }
+
+#[test]
+fn test_template_if_chain() {
+    let input = r#"
+    <div>
+        <template v-if="false">A</template>
+        <template v-else-if="true">B</template>
+        <template v-else>C</template>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        B
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+// === v-for ===
 
 #[test]
 fn test_template_for() {
@@ -182,6 +206,71 @@ fn test_template_for_complex() {
 }
 
 #[test]
+fn test_template_for_object_with_key_index() {
+    let input = r#"
+    <div>
+        <template v-for="val, key, idx in { a: 1, b: 2 }">
+            <p>{{ `[${idx}] ${key}: ${val}` }}</p>
+        </template>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <p>[0] a: 1</p>
+        <p>[1] b: 2</p>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_template_for_with_inner_if() {
+    let input = r#"
+    <div>
+        <template v-for="n in [1, 2, 3]">
+            <template v-if="n % 2 === 1">
+                <span>{{ n }}</span>
+            </template>
+        </template>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <span>1</span>
+        <span>3</span>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_template_for_trims_whitespace_children() {
+    let input = r#"
+    <div>
+        <template v-for="i in [1,2]">
+            
+            
+            <em>{{ i }}</em>
+            
+            
+        </template>
+    </div>
+    "#;
+    let output = render(input.to_string(), Value::Null).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <em>1</em>
+        <em>2</em>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+// === v-pre ===
+
+#[test]
 fn test_template_pre() {
     let input = r#"
     <div>
@@ -235,63 +324,7 @@ fn test_template_pre_with_if() {
     assert_eq!(output, expected);
 }
 
-#[test]
-fn test_template_if_chain() {
-    let input = r#"
-    <div>
-        <template v-if="false">A</template>
-        <template v-else-if="true">B</template>
-        <template v-else>C</template>
-    </div>
-    "#;
-    let output = render(input.to_string(), data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        B
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
-}
-
-#[test]
-fn test_template_for_object_with_key_index() {
-    let input = r#"
-    <div>
-        <template v-for="val, key, idx in { a: 1, b: 2 }">
-            <p>{{ `[${idx}] ${key}: ${val}` }}</p>
-        </template>
-    </div>
-    "#;
-    let output = render(input.to_string(), data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        <p>[0] a: 1</p>
-        <p>[1] b: 2</p>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
-}
-
-#[test]
-fn test_template_for_with_inner_if() {
-    let input = r#"
-    <div>
-        <template v-for="n in [1, 2, 3]">
-            <template v-if="n % 2 === 1">
-                <span>{{ n }}</span>
-            </template>
-        </template>
-    </div>
-    "#;
-    let output = render(input.to_string(), data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        <span>1</span>
-        <span>3</span>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
-}
+// === Attributes ===
 
 #[test]
 fn test_template_no_directive_with_attrs() {
@@ -304,29 +337,6 @@ fn test_template_no_directive_with_attrs() {
 
     let expected = r#"<html><head></head><body><div>
         <template data-x="y"></template>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
-}
-
-#[test]
-fn test_template_for_trims_whitespace_children() {
-    let input = r#"
-    <div>
-        <template v-for="i in [1,2]">
-            
-            
-            <em>{{ i }}</em>
-            
-            
-        </template>
-    </div>
-    "#;
-    let output = render(input.to_string(), Value::Null).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        <em>1</em>
-        <em>2</em>
     </div>
     </body></html>"#;
     assert_eq!(output, expected);

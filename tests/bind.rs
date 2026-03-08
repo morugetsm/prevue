@@ -10,7 +10,7 @@ fn data() -> Value {
             "num": 123,
             "truthy": true,
             "falsy": false,
-            "nullval": null,
+            "nullish": null,
         },
         "dynamicKey": "data-id",
         "dynamic-key": "data-id",
