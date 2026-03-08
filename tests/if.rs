@@ -4,17 +4,17 @@ use serde_json::{Value, json};
 fn data() -> Value {
     json!({
         "list": [1, 2, 3],
-        "number": 9999,
         "user": {
-            "label": "User",
-            "value": "Morrison",
+            "name": "Alice",
             "age": 28
         },
     })
 }
 
+// === Basic Behavior ===
+
 #[test]
-fn test_if() {
+fn test_if_basic() {
     let input = r#"
     <div>
         <p>Hello, world!</p>
@@ -35,7 +35,8 @@ fn test_if() {
 }
 
 #[test]
-fn test_if_cast() {
+fn test_if_truthy_cast() {
+    // JS truthiness: 0 is false, non-empty array is true
     let input = r#"
     <div>
         <div v-if="0">0 is false</div>
@@ -52,7 +53,8 @@ fn test_if_cast() {
 }
 
 #[test]
-fn test_if_safety() {
+fn test_if_edge_cases() {
+    // empty string, null, undefined, NaN are falsy; Infinity is truthy
     let input = r#"
     <div>
         <div v-if="">empty</div>
@@ -72,73 +74,71 @@ fn test_if_safety() {
     assert_eq!(output, expected);
 }
 
+// === Expression ===
+
 #[test]
-fn test_if_with_else1() {
+fn test_if_expression() {
+    // v-if evaluates arbitrary JS expressions against data
     let input = r#"
     <div>
-        <div v-if="true" v-else>IF</div>
+        <p v-if="user.age >= 18">{{ user.name }} ({{ user.age }})</p>
+        <p v-if="user.age < 18">minor</p>
     </div>
     "#;
     let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
-        <div>IF</div>
+        <p>Alice (28)</p>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+// === Same-Element Directives ===
+
+#[test]
+fn test_if_with_else_on_same_element() {
+    // v-if and v-else on the same element: v-if always takes precedence regardless of attribute order
+    let input = r#"
+    <div>
+        <div v-if="true" v-else>first</div>
+        <div v-else v-if="true">second</div>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <div>first</div>
+        <div>second</div>
     </div>
     </body></html>"#;
     assert_eq!(output, expected);
 }
 
 #[test]
-fn test_if_with_else2() {
+fn test_if_with_else_if_on_same_element() {
+    // v-if and v-else-if on the same element: v-if always takes precedence regardless of attribute order
     let input = r#"
     <div>
-        <div v-else v-if="true">ELSE</div>
+        <div v-if="true" v-else-if="false">first</div>
+        <div v-else-if="false" v-if="true">second</div>
     </div>
     "#;
     let output = render(input.to_string(), data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
-        <div>ELSE</div>
+        <div>first</div>
+        <div>second</div>
     </div>
     </body></html>"#;
     assert_eq!(output, expected);
 }
 
-#[test]
-fn test_if_with_else_if1() {
-    let input = r#"
-    <div>
-        <div v-if="true" v-else-if="false">IF</div>
-    </div>
-    "#;
-    let output = render(input.to_string(), data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        <div>IF</div>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
-}
+// === Priority over v-for ===
 
 #[test]
-fn test_if_with_else_if2() {
-    let input = r#"
-    <div>
-        <div v-else-if="false" v-if="true">IF</div>
-    </div>
-    "#;
-    let output = render(input.to_string(), data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        <div>IF</div>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
-}
-
-#[test]
-fn test_if_with_for1() {
-    // v-if takes precedence over v-for
+fn test_if_takes_priority_over_for() {
+    // v-if takes precedence over v-for — element renders once, not per iteration
     let input = r#"
     <div>
         <div v-if="true" v-for="item in list">IF</div>
@@ -154,8 +154,9 @@ fn test_if_with_for1() {
 }
 
 #[test]
-fn test_if_with_for2() {
-    // Directive precedence is fixed (not by order of appearance)
+fn test_if_for_scope_unavailable() {
+    // v-if is evaluated before v-for regardless of attribute order,
+    // so the loop variable is not available to v-if
     let input = r#"
     <div>
         <div v-for="item in list" v-if="item > 1">IF{{ item }}</div>
