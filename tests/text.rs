@@ -7,9 +7,9 @@ fn data() -> Value {
         "bool_val": true,
         "str": "Hello, world!",
         "num": 42,
-        "arr": [1, 2, 3],
+        "arr": [ 1, 2, 3 ],
         "obj": { "key": "value" },
-        "mixed_arr": [null, true, "hello", 1, [4, 5, 6], { "a": "b" }],
+        "mixed_arr": [ null, true, "hello", 1, [4, 5, 6], { "a": "b" } ],
         "mixed_obj": { "a": null, "b": true, "c": "hello", "d": 1, "e": [4, 5, 6], "f": { "g": "h" } },
     })
 }
