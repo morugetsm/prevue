@@ -18,8 +18,6 @@ use engine::{BindingAlias, Engine};
 
 static SYNTAX_MUSTACHE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?s)\{\{\s*(.+?)\s*\}\}").unwrap());
-static SYNTAX_BIND: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(?:v-bind:|:)(?<arg>.+)$").unwrap());
 
 /// Render HTML template with data
 ///
@@ -144,7 +142,7 @@ fn hydrate_node(handle: &Handle, engine: &mut Engine) {
 
                 // v-bind object syntax: v-bind="{ key: value }"
                 if name_ref == "v-bind" {
-                    if let Ok(js_val) = engine.eval(attr.value.as_ref())
+                    if let Ok(js_val) = engine.eval_expr(attr.value.as_ref())
                         && let Ok(Some(json_val)) = js_val.to_json(&mut engine.context)
                         && let Some(obj) = json_val.as_object()
                     {
@@ -164,8 +162,10 @@ fn hydrate_node(handle: &Handle, engine: &mut Engine) {
                 }
 
                 // v-bind argument syntax: :attr="value" or v-bind:attr="value"
-                if let Some(caps) = SYNTAX_BIND.captures(name_ref) {
-                    let arg_raw = caps.name("arg").map(|m| m.as_str()).unwrap_or("");
+                if let Some(arg_raw) = name_ref
+                    .strip_prefix(':')
+                    .or_else(|| name_ref.strip_prefix("v-bind:"))
+                {
                     let value_expr = attr.value.trim();
 
                     if arg_raw.starts_with('[') && arg_raw.ends_with(']') {
@@ -174,7 +174,7 @@ fn hydrate_node(handle: &Handle, engine: &mut Engine) {
                             continue;
                         }
                         let inner = &arg_raw[1..arg_raw.len() - 1];
-                        match (engine.eval_fmt(inner), engine.eval_fmt(value_expr)) {
+                        match (engine.eval_attr(inner), engine.eval_attr(value_expr)) {
                             (Some(resolved), Some(value)) => renames.push((i, resolved, value)),
                             _ => removals.push(i),
                         }
@@ -184,7 +184,7 @@ fn hydrate_node(handle: &Handle, engine: &mut Engine) {
                         } else {
                             value_expr
                         };
-                        match engine.eval_fmt(target) {
+                        match engine.eval_attr(target) {
                             Some(value) => renames.push((i, arg_raw.to_string(), value)),
                             None => removals.push(i),
                         }
@@ -400,17 +400,13 @@ struct ForSyntax {
 fn process_for(node: &Handle, engine: &mut Engine, expr: &str) -> Option<Vec<Handle>> {
     let syntax = parse_for_syntax(engine, expr)?;
 
-    let iter_expr = syntax.iter_expr.trim();
-    let iter_wrapped = if iter_expr.starts_with('{') {
-        format!("({})", iter_expr)
-    } else {
-        iter_expr.to_string()
-    };
-
     let indent_opt = get_indent(node);
     let mut result_nodes = Vec::new();
 
-    match engine.eval(iter_wrapped.as_str()).map(|val| val.variant()) {
+    match engine
+        .eval_expr(syntax.iter_expr.trim())
+        .map(|val| val.variant())
+    {
         Ok(JsVariant::Object(obj)) if obj.is_array() => {
             let keys = obj.own_property_keys(&mut engine.context).ok()?;
 
@@ -499,7 +495,12 @@ fn process_for(node: &Handle, engine: &mut Engine, expr: &str) -> Option<Vec<Han
 
 fn parse_for_syntax(engine: &mut Engine, expr: &str) -> Option<ForSyntax> {
     for (aliases_raw, iter_expr) in split_for_expressions(expr) {
-        let aliases_raw = strip_wrapping_parens(aliases_raw);
+        let aliases_raw = aliases_raw.trim();
+        let aliases_raw = if aliases_raw.starts_with('(') && aliases_raw.ends_with(')') {
+            aliases_raw[1..aliases_raw.len() - 1].trim()
+        } else {
+            aliases_raw
+        };
         if let Some(alias) = engine.parse_binding_alias(aliases_raw) {
             return Some(ForSyntax {
                 alias,
@@ -525,15 +526,6 @@ fn split_for_expressions(expr: &str) -> impl Iterator<Item = (&str, &str)> {
 
         None
     })
-}
-
-fn strip_wrapping_parens(input: &str) -> &str {
-    let trimmed = input.trim();
-    if trimmed.starts_with('(') && trimmed.ends_with(')') {
-        trimmed[1..trimmed.len() - 1].trim()
-    } else {
-        trimmed
-    }
 }
 
 fn is_keyword_at(input: &str, idx: usize, keyword: &str) -> bool {

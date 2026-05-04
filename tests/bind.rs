@@ -256,3 +256,19 @@ fn test_bind_object_overrides_existing_attr() {
     </body></html>"#;
     assert_eq!(output, expected);
 }
+
+#[test]
+fn test_bind_object_literal() {
+    let input = r#"
+    <div>
+        <span v-bind="{ id, value: value * 2, hidden: null, skip: undefined, ok: false }">elem</span>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <span id="title" value="666" ok="false">elem</span>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
