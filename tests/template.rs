@@ -89,6 +89,29 @@ fn test_template_for() {
 }
 
 #[test]
+fn test_template_for_destructuring() {
+    let input = r#"
+    <div>
+        <template v-for="{ foo } in list">{{ foo }}</template>
+    </div>
+    "#;
+    let data = json!({
+        "list": [
+            { "foo": "a" },
+            { "foo": "b" }
+        ],
+    });
+    let output = render(input.to_string(), data).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        a
+        b
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
 fn test_template_for_empty() {
     let input = r#"
     <div>

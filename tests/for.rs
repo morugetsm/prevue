@@ -109,6 +109,104 @@ fn test_for_array_excess_arguments() {
 }
 
 #[test]
+fn test_for_object_destructuring_alias() {
+    let input = r#"
+    <div>
+        <p v-for="{ foo, bar } in items">{{ `${foo}:${bar}` }}</p>
+    </div>
+    "#;
+    let data = json!({
+        "items": [
+            { "foo": "a", "bar": 1 },
+            { "foo": "b", "bar": 2 }
+        ],
+    });
+    let output = render(input.to_string(), data).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <p>a:1</p>
+        <p>b:2</p>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_for_object_destructuring_nested_default_rest() {
+    let input = r#"
+    <div>
+        <p v-for="{ foo: label, nested: { count = 0 }, ...rest } in items">
+            {{ `${label}:${count}:${rest.extra}` }}
+        </p>
+    </div>
+    "#;
+    let data = json!({
+        "items": [
+            { "foo": "a", "nested": { "count": 7 }, "extra": "x" },
+            { "foo": "b", "nested": {}, "extra": "y" }
+        ],
+    });
+    let output = render(input.to_string(), data).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <p>
+            a:7:x
+        </p>
+        <p>
+            b:0:y
+        </p>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_for_array_destructuring_alias() {
+    let input = r#"
+    <div>
+        <p v-for="[first, second, ...rest] in rows">{{ `${first}:${second}:${rest.length}` }}</p>
+    </div>
+    "#;
+    let data = json!({
+        "rows": [
+            [1, 2, 3, 4],
+            [5, 6]
+        ],
+    });
+    let output = render(input.to_string(), data).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <p>1:2:2</p>
+        <p>5:6:0</p>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_for_destructuring_with_index() {
+    let input = r#"
+    <div>
+        <p v-for="{ name }, index in users">{{ `${index}:${name}` }}</p>
+    </div>
+    "#;
+    let data = json!({
+        "users": [
+            { "name": "Alice" },
+            { "name": "Bob" }
+        ],
+    });
+    let output = render(input.to_string(), data).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <p>0:Alice</p>
+        <p>1:Bob</p>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
 fn test_for_nested() {
     let input = r#"
     <div>
@@ -192,6 +290,29 @@ fn test_for_object_three_arguments() {
             <h2>age</h2>
             <h3>1</h3>
         </div>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_for_object_destructuring_key_index() {
+    let input = r#"
+    <div>
+        <p v-for="{ age }, key, index in users">{{ `${key}:${index}:${age}` }}</p>
+    </div>
+    "#;
+    let data = json!({
+        "users": {
+            "alice": { "age": 21 },
+            "bob": { "age": 22 }
+        },
+    });
+    let output = render(input.to_string(), data).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <p>alice:0:21</p>
+        <p>bob:1:22</p>
     </div>
     </body></html>"#;
     assert_eq!(output, expected);
@@ -555,6 +676,21 @@ fn test_for_syntax_error() {
     let input = r#"
     <div>
         <div v-for="Hello, world!">Hello, world!</div>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_for_destructuring_syntax_error() {
+    let input = r#"
+    <div>
+        <div v-for="{ foo: } in list">Hello, world!</div>
     </div>
     "#;
     let output = render(input.to_string(), data()).unwrap();

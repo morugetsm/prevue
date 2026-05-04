@@ -1,6 +1,6 @@
 [package]
 name = "prevue"
-version = "0.0.6"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["morugetsm <shouu6@gmail.com>"]
@@ -13,7 +13,9 @@ categories = ["template-engine"]
 
 [dependencies]
 anyhow = "1.0"
+boa_ast = "0.21"
 boa_engine = { version = "0.21", features = ["deser"] }
+boa_parser = "0.21"
 html5ever = "0.38.0"
 markup5ever_rcdom = "0.38.0"
 regex = "1.12"

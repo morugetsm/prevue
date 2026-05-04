@@ -14,18 +14,12 @@ use std::str::FromStr;
 use std::sync::LazyLock;
 
 mod engine;
-use engine::Engine;
+use engine::{BindingAlias, Engine};
 
 static SYNTAX_MUSTACHE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?s)\{\{\s*(.+?)\s*\}\}").unwrap());
 static SYNTAX_BIND: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(?:v-bind:|:)(?<arg>.+)$").unwrap());
-static SYNTAX_FOR: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"^\s*(?<val>[\p{XID_Start}_$]\p{XID_Continue}*)\s*(?:,\s*(?<key>[\p{XID_Start}_$]\p{XID_Continue}*)\s*(?:,\s*(?<idx>[\p{XID_Start}_$]\p{XID_Continue}*)\s*)?)?\s+(?:in|of)\s+(?<iter>.+)\s*$",
-    )
-    .unwrap()
-});
 
 /// Render HTML template with data
 ///
@@ -397,19 +391,22 @@ fn process_directives(
     directive_for.map(|expr| process_for(node, engine, &expr).unwrap_or_default())
 }
 
+struct ForSyntax {
+    alias: BindingAlias,
+    iter_expr: String,
+}
+
 // Process for directive
 fn process_for(node: &Handle, engine: &mut Engine, expr: &str) -> Option<Vec<Handle>> {
-    let syntax = SYNTAX_FOR.captures(expr)?;
+    let syntax = parse_for_syntax(engine, expr)?;
 
-    let iter_iden = syntax.name("iter")?;
-    let iter_expr = iter_iden.as_str().trim();
+    let iter_expr = syntax.iter_expr.trim();
     let iter_wrapped = if iter_expr.starts_with('{') {
         format!("({})", iter_expr)
     } else {
         iter_expr.to_string()
     };
 
-    let val_iden = syntax.name("val")?;
     let indent_opt = get_indent(node);
     let mut result_nodes = Vec::new();
 
@@ -428,10 +425,9 @@ fn process_for(node: &Handle, engine: &mut Engine, expr: &str) -> Option<Vec<Han
                 let item = obj
                     .get(property_key.clone(), &mut engine.context)
                     .unwrap_or(JsValue::undefined());
-                engine.set_val(val_iden.as_str(), item);
-
-                if let Some(key_iden) = syntax.name("key") {
-                    engine.set_val(key_iden.as_str(), JsValue::new(index.get()));
+                if !engine.bind_alias(&syntax.alias, [item, JsValue::new(index.get())]) {
+                    engine.exit_scope();
+                    continue;
                 }
 
                 process_for_iteration(node, engine, &indent_opt, &mut result_nodes);
@@ -450,13 +446,12 @@ fn process_for(node: &Handle, engine: &mut Engine, expr: &str) -> Option<Vec<Han
                 let value = obj
                     .get(property_key.clone(), &mut engine.context)
                     .unwrap_or(JsValue::undefined());
-                engine.set_val(val_iden.as_str(), value);
-
-                if let Some(key_iden) = syntax.name("key") {
-                    engine.set_val(key_iden.as_str(), property_key.into());
-                }
-                if let Some(idx_iden) = syntax.name("idx") {
-                    engine.set_val(idx_iden.as_str(), JsValue::new(idx as i32));
+                if !engine.bind_alias(
+                    &syntax.alias,
+                    [value, property_key.into(), JsValue::new(idx as i32)],
+                ) {
+                    engine.exit_scope();
+                    continue;
                 }
 
                 process_for_iteration(node, engine, &indent_opt, &mut result_nodes);
@@ -470,10 +465,9 @@ fn process_for(node: &Handle, engine: &mut Engine, expr: &str) -> Option<Vec<Han
                     continue;
                 }
 
-                engine.set_val(val_iden.as_str(), JsValue::new(num));
-
-                if let Some(key_iden) = syntax.name("key") {
-                    engine.set_val(key_iden.as_str(), JsValue::new(idx));
+                if !engine.bind_alias(&syntax.alias, [JsValue::new(num), JsValue::new(idx)]) {
+                    engine.exit_scope();
+                    continue;
                 }
 
                 process_for_iteration(node, engine, &indent_opt, &mut result_nodes);
@@ -487,10 +481,9 @@ fn process_for(node: &Handle, engine: &mut Engine, expr: &str) -> Option<Vec<Han
                     continue;
                 }
 
-                engine.set_val(val_iden.as_str(), JsValue::new(ch));
-
-                if let Some(key_iden) = syntax.name("key") {
-                    engine.set_val(key_iden.as_str(), JsValue::new(idx));
+                if !engine.bind_alias(&syntax.alias, [JsValue::new(ch), JsValue::new(idx)]) {
+                    engine.exit_scope();
+                    continue;
                 }
 
                 process_for_iteration(node, engine, &indent_opt, &mut result_nodes);
@@ -502,6 +495,61 @@ fn process_for(node: &Handle, engine: &mut Engine, expr: &str) -> Option<Vec<Han
     }
 
     Some(result_nodes)
+}
+
+fn parse_for_syntax(engine: &mut Engine, expr: &str) -> Option<ForSyntax> {
+    for (aliases_raw, iter_expr) in split_for_expressions(expr) {
+        let aliases_raw = strip_wrapping_parens(aliases_raw);
+        if let Some(alias) = engine.parse_binding_alias(aliases_raw) {
+            return Some(ForSyntax {
+                alias,
+                iter_expr: iter_expr.trim().to_string(),
+            });
+        }
+    }
+
+    None
+}
+
+fn split_for_expressions(expr: &str) -> impl Iterator<Item = (&str, &str)> {
+    expr.char_indices().filter_map(|(idx, _)| {
+        for keyword in ["in", "of"] {
+            if is_keyword_at(expr, idx, keyword) {
+                let alias = expr[..idx].trim();
+                let iter = expr[idx + keyword.len()..].trim();
+                if !alias.is_empty() && !iter.is_empty() {
+                    return Some((alias, iter));
+                }
+            }
+        }
+
+        None
+    })
+}
+
+fn strip_wrapping_parens(input: &str) -> &str {
+    let trimmed = input.trim();
+    if trimmed.starts_with('(') && trimmed.ends_with(')') {
+        trimmed[1..trimmed.len() - 1].trim()
+    } else {
+        trimmed
+    }
+}
+
+fn is_keyword_at(input: &str, idx: usize, keyword: &str) -> bool {
+    input[idx..].starts_with(keyword)
+        && input[..idx]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !is_identifier_continue(ch))
+        && input[idx + keyword.len()..]
+            .chars()
+            .next()
+            .is_none_or(|ch| !is_identifier_continue(ch))
+}
+
+fn is_identifier_continue(ch: char) -> bool {
+    ch == '$' || ch == '_' || ch.is_alphanumeric()
 }
 
 // Process a single iteration of v-for

@@ -874,10 +874,12 @@ checksum = "925383efa346730478fb4838dbe9137d2a47675ad789c546d150a6e1dd4ab31c"
 
 [[package]]
 name = "prevue"
-version = "0.0.6"
+version = "0.1.0"
 dependencies = [
  "anyhow",
+ "boa_ast",
  "boa_engine",
+ "boa_parser",
  "html5ever",
  "markup5ever_rcdom",
  "regex",
