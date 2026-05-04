@@ -16,9 +16,9 @@ use serde::Serialize;
 use serde_json::Value as JsonValue;
 
 #[derive(Clone, Debug)]
-pub(crate) struct BindingAlias {
-    source: String,
-    names: Vec<String>,
+pub(crate) struct ForBinding {
+    pattern: String,
+    locals: Vec<String>,
 }
 
 pub(crate) struct Engine {
@@ -91,13 +91,13 @@ impl Engine {
         let _ = scope.set(JsString::from(key), value, false, &mut self.context);
     }
 
-    pub fn parse_binding_alias(&mut self, source: &str) -> Option<BindingAlias> {
-        let source = source.trim();
-        if source.is_empty() {
+    pub fn parse_for_binding(&mut self, pattern: &str) -> Option<ForBinding> {
+        let pattern = pattern.trim();
+        if pattern.is_empty() {
             return None;
         }
 
-        let code = format!("let [{source}] = [];");
+        let code = format!("let [{pattern}] = [];");
         let mut parser = Parser::new(ParserSource::from_bytes(code.as_bytes()));
         let script = parser
             .parse_script(&Scope::new_global(), self.context.interner_mut())
@@ -115,23 +115,23 @@ impl Engine {
         };
 
         let binding = variable.binding();
-        let Binding::Pattern(Pattern::Array(pattern)) = binding else {
+        let Binding::Pattern(Pattern::Array(array_pattern)) = binding else {
             return None;
         };
-        if pattern.bindings().is_empty() || pattern.bindings().len() > 3 {
+        if array_pattern.bindings().is_empty() || array_pattern.bindings().len() > 3 {
             return None;
         }
 
-        let mut names = Vec::new();
-        collect_binding_names(binding, self.context.interner(), &mut names);
+        let mut locals = Vec::new();
+        collect_binding_names(binding, self.context.interner(), &mut locals);
 
-        Some(BindingAlias {
-            source: source.to_string(),
-            names,
+        Some(ForBinding {
+            pattern: pattern.to_string(),
+            locals,
         })
     }
 
-    pub fn bind_alias<I>(&mut self, alias: &BindingAlias, slots: I) -> bool
+    pub fn bind_for_slots<I>(&mut self, binding: &ForBinding, slots: I) -> bool
     where
         I: IntoIterator<Item = JsValue>,
     {
@@ -162,8 +162,8 @@ impl Engine {
 
         let temp_ref = js_string_literal(&temp_key);
         let scope_ref = js_string_literal(&scope_key);
-        let copies = alias
-            .names
+        let copies = binding
+            .locals
             .iter()
             .map(|name| {
                 format!(
@@ -173,7 +173,10 @@ impl Engine {
                 )
             })
             .collect::<String>();
-        let code = format!("let [{}] = globalThis[{temp_ref}]; {copies}", alias.source);
+        let code = format!(
+            "let [{}] = globalThis[{temp_ref}]; {copies}",
+            binding.pattern
+        );
         let result = self.eval(&code).is_ok();
 
         let _ = self
@@ -232,14 +235,6 @@ impl Engine {
         fmt_text(&value, &mut self.context)
     }
 
-    pub fn eval_attr(&mut self, code: &str) -> Option<String> {
-        let value = self.eval_expr(code).ok()?;
-        match value.variant() {
-            JsVariant::Null | JsVariant::Undefined => None,
-            _ => fmt_text(&value, &mut self.context),
-        }
-    }
-
     pub fn eval_bool(&mut self, code: &str) -> Option<bool> {
         Some(self.eval_expr(code).ok()?.to_boolean())
     }
@@ -290,18 +285,18 @@ fn fmt_json(val: &JsonValue) -> String {
 fn collect_binding_names(
     binding: &Binding,
     interner: &boa_engine::interner::Interner,
-    names: &mut Vec<String>,
+    locals: &mut Vec<String>,
 ) {
     match binding {
-        Binding::Identifier(ident) => push_identifier(ident, interner, names),
-        Binding::Pattern(pattern) => collect_pattern_names(pattern, interner, names),
+        Binding::Identifier(ident) => push_identifier(ident, interner, locals),
+        Binding::Pattern(pattern) => collect_pattern_names(pattern, interner, locals),
     }
 }
 
 fn collect_pattern_names(
     pattern: &Pattern,
     interner: &boa_engine::interner::Interner,
-    names: &mut Vec<String>,
+    locals: &mut Vec<String>,
 ) {
     match pattern {
         Pattern::Object(pattern) => {
@@ -309,10 +304,10 @@ fn collect_pattern_names(
                 match element {
                     ObjectPatternElement::SingleName { ident, .. }
                     | ObjectPatternElement::RestProperty { ident } => {
-                        push_identifier(ident, interner, names);
+                        push_identifier(ident, interner, locals);
                     }
                     ObjectPatternElement::Pattern { pattern, .. } => {
-                        collect_pattern_names(pattern, interner, names);
+                        collect_pattern_names(pattern, interner, locals);
                     }
                     ObjectPatternElement::AssignmentPropertyAccess { .. }
                     | ObjectPatternElement::AssignmentRestPropertyAccess { .. } => {}
@@ -324,11 +319,11 @@ fn collect_pattern_names(
                 match element {
                     ArrayPatternElement::SingleName { ident, .. }
                     | ArrayPatternElement::SingleNameRest { ident } => {
-                        push_identifier(ident, interner, names);
+                        push_identifier(ident, interner, locals);
                     }
                     ArrayPatternElement::Pattern { pattern, .. }
                     | ArrayPatternElement::PatternRest { pattern } => {
-                        collect_pattern_names(pattern, interner, names);
+                        collect_pattern_names(pattern, interner, locals);
                     }
                     ArrayPatternElement::Elision
                     | ArrayPatternElement::PropertyAccess { .. }
@@ -342,11 +337,11 @@ fn collect_pattern_names(
 fn push_identifier(
     ident: &Identifier,
     interner: &boa_engine::interner::Interner,
-    names: &mut Vec<String>,
+    locals: &mut Vec<String>,
 ) {
     let name = interner.resolve_expect(*ident.sym_ref()).to_string();
-    if !names.iter().any(|existing| existing == &name) {
-        names.push(name);
+    if !locals.iter().any(|existing| existing == &name) {
+        locals.push(name);
     }
 }
 

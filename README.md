@@ -62,7 +62,7 @@ let output = render(html, data).unwrap();
 |---|---|---|
 | `{{ }}` | ✅ |  |
 | `<template>` | ✅ |  |
-| `v-bind`, `:attr` | 🟡 | No class/style object binding |
+| `v-bind`, `:attr` | 🟡 | No class/style normalization |
 | `v-if` | ✅ |  |
 | `v-else` | ✅ |  |
 | `v-else-if` | ✅ |  |
@@ -86,9 +86,9 @@ This library uses [html5ever](https://github.com/servo/html5ever), which follows
 This library uses a [Boa](https://github.com/boa-dev/boa) JavaScript engine to evaluate expressions.
 
 - ⚠️ **Security:** Never use untrusted templates or data.
-- **Evaluation Behavior:** Unlike Vue, which restricts each binding to a single expression, prevue currently allows both expressions and statements in all binding contexts (e.g., `{{ let x = 1; x + 1 }}` → `2`). This may change in future versions to match Vue's behavior.
-- **Variable Access:** Accessing undefined variables will cause the entire expression evaluation to fail, rather than returning `undefined`. Always ensure that variables exist in the provided data.
-- **`this` Context:** While `this` is accessible in the JavaScript engine context, its behavior may vary due to internal optimizations, and access is restricted in the template engine context. Therefore, using `this` is not recommended.
+- **Evaluation Behavior:** Unlike Vue, which restricts each binding to a single expression, prevue currently allows both expressions and statements in all binding contexts (e.g., `:x="let n = 1; n + 1"` and `{{ let n = 1; n + 1 }}` → `2`). This may change in future versions to match Vue's behavior.
+- **Variable Access:** Accessing undeclared identifiers will cause the entire expression evaluation to fail, rather than returning `undefined`. Always ensure that variables exist in the provided data.
+- **`this` Context:** `this` is not Vue-compatible and may expose internal scope objects. Using `this` in templates is not recommended.
 
 
 ## License

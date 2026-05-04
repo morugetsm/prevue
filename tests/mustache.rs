@@ -66,8 +66,7 @@ fn test_mustache_multiline() {
 
 #[test]
 fn test_mustache_unclosed() {
-    // Unclosed mustache should be left as is or ignored. Let's see what prevue currently outputs.
-    // Actually, in test_for_array in tests/for.rs: <h1>{{ notclosed }</h1> outputs as <h1>{{ notclosed }</h1>
+    // Unclosed mustache is left untouched.
     let input = r#"
     <div>
         {{ unclosed }
@@ -248,7 +247,7 @@ fn test_mustache_comment() {
 
 #[test]
 fn test_mustache_this_json() {
-    // can't serialize this
+    // JSON.stringify(this) exposes the engine's global scope object.
     let input = r#"
     <div>
         {{ JSON.stringify(this) }}

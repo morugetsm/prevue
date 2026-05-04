@@ -14,7 +14,7 @@ use std::str::FromStr;
 use std::sync::LazyLock;
 
 mod engine;
-use engine::{BindingAlias, Engine};
+use engine::{Engine, ForBinding};
 
 static SYNTAX_MUSTACHE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?s)\{\{\s*(.+?)\s*\}\}").unwrap());
@@ -52,12 +52,12 @@ pub fn render(html: String, data: impl Serialize) -> Result<String, anyhow::Erro
 
 // Traverse and process a node
 fn traverse(handle: &Handle, engine: &mut Engine) {
-    hydrate_node(handle, engine);
+    process_node_content(handle, engine);
 
-    let children: Vec<Handle> = get_children_source(handle);
+    let children: Vec<Handle> = children_for_traversal(handle);
 
-    let mut in_if_chain = false;
-    let mut if_chain_hit = false;
+    let mut if_chain_active = false;
+    let mut if_chain_matched = false;
 
     for node in children.iter() {
         if let NodeData::Element { attrs, .. } = &node.data
@@ -66,18 +66,19 @@ fn traverse(handle: &Handle, engine: &mut Engine) {
             continue;
         }
 
-        let processed = process_directives(node, engine, &mut in_if_chain, &mut if_chain_hit);
+        let processed =
+            process_directives(node, engine, &mut if_chain_active, &mut if_chain_matched);
 
         if let Some(replacements) = processed {
-            replace_in_children_source(node, &replacements);
+            replace_node_in_parent(node, &replacements);
         } else {
             traverse(node, engine);
         }
     }
 }
 
-// Hydrate node: process v-bind and mustache
-fn hydrate_node(handle: &Handle, engine: &mut Engine) {
+// Process node content: v-bind, v-text, and mustache
+fn process_node_content(handle: &Handle, engine: &mut Engine) {
     match &handle.data {
         NodeData::Element { attrs, .. } => {
             let mut renames: Vec<(usize, String, String)> = Vec::new();
@@ -140,7 +141,7 @@ fn hydrate_node(handle: &Handle, engine: &mut Engine) {
                     continue;
                 }
 
-                // v-bind object syntax: v-bind="{ key: value }"
+                // v-bind object spread: v-bind="obj" or v-bind="{ key: value }"
                 if name_ref == "v-bind" {
                     if let Ok(js_val) = engine.eval_expr(attr.value.as_ref())
                         && let Ok(Some(json_val)) = js_val.to_json(&mut engine.context)
@@ -174,7 +175,7 @@ fn hydrate_node(handle: &Handle, engine: &mut Engine) {
                             continue;
                         }
                         let inner = &arg_raw[1..arg_raw.len() - 1];
-                        match (engine.eval_attr(inner), engine.eval_attr(value_expr)) {
+                        match (engine.eval_fmt(inner), engine.eval_fmt(value_expr)) {
                             (Some(resolved), Some(value)) => renames.push((i, resolved, value)),
                             _ => removals.push(i),
                         }
@@ -184,7 +185,7 @@ fn hydrate_node(handle: &Handle, engine: &mut Engine) {
                         } else {
                             value_expr
                         };
-                        match engine.eval_attr(target) {
+                        match engine.eval_fmt(target) {
                             Some(value) => renames.push((i, arg_raw.to_string(), value)),
                             None => removals.push(i),
                         }
@@ -246,7 +247,7 @@ fn hydrate_node(handle: &Handle, engine: &mut Engine) {
 }
 
 // Replace node with new_nodes in its parent's children
-fn replace_in_children_source(node: &Handle, new_nodes: &[Handle]) {
+fn replace_node_in_parent(node: &Handle, new_nodes: &[Handle]) {
     let Some(node_parent_weak) = node.parent.take() else {
         return;
     };
@@ -306,8 +307,8 @@ fn replace_in_children_source(node: &Handle, new_nodes: &[Handle]) {
     }
 }
 
-// Get children source: template_contents for <template> with directives, else children
-fn get_children_source(handle: &Handle) -> Vec<Handle> {
+// Use template_contents for <template> with directives, else normal children.
+fn children_for_traversal(handle: &Handle) -> Vec<Handle> {
     if let NodeData::Element {
         template_contents, ..
     } = &handle.data
@@ -323,15 +324,15 @@ fn get_children_source(handle: &Handle) -> Vec<Handle> {
 fn process_directives(
     node: &Handle,
     engine: &mut Engine,
-    in_if_chain: &mut bool,
-    if_chain_hit: &mut bool,
+    if_chain_active: &mut bool,
+    if_chain_matched: &mut bool,
 ) -> Option<Vec<Handle>> {
     let NodeData::Element { attrs, .. } = &node.data else {
         return None;
     };
 
     let directive_if = find_and_remove_directive(attrs, "v-if");
-    let directive_elif = find_and_remove_directive(attrs, "v-else-if");
+    let directive_else_if = find_and_remove_directive(attrs, "v-else-if");
     let directive_else = find_and_remove_directive(attrs, "v-else");
     let directive_for = find_and_remove_directive(attrs, "v-for");
 
@@ -346,9 +347,9 @@ fn process_directives(
 
     // v-if
     if let Some(expr) = directive_if {
-        *in_if_chain = true;
-        *if_chain_hit = engine.eval_bool(&expr).unwrap_or(false);
-        return Some(if *if_chain_hit {
+        *if_chain_active = true;
+        *if_chain_matched = engine.eval_bool(&expr).unwrap_or(false);
+        return Some(if *if_chain_matched {
             render_targets(node, engine)
         } else {
             Vec::new()
@@ -356,15 +357,15 @@ fn process_directives(
     }
 
     // v-else-if
-    if let Some(expr) = directive_elif {
-        if !*in_if_chain {
+    if let Some(expr) = directive_else_if {
+        if !*if_chain_active {
             return None;
         }
-        if *if_chain_hit {
+        if *if_chain_matched {
             return Some(Vec::new());
         }
-        *if_chain_hit = engine.eval_bool(&expr).unwrap_or(false);
-        return Some(if *if_chain_hit {
+        *if_chain_matched = engine.eval_bool(&expr).unwrap_or(false);
+        return Some(if *if_chain_matched {
             render_targets(node, engine)
         } else {
             Vec::new()
@@ -373,38 +374,49 @@ fn process_directives(
 
     // v-else
     if directive_else.is_some() {
-        if !*in_if_chain {
+        if !*if_chain_active {
             return None;
         }
-        *in_if_chain = false;
-        return Some(if *if_chain_hit {
+        *if_chain_active = false;
+        return Some(if *if_chain_matched {
             Vec::new()
         } else {
-            *if_chain_hit = true;
+            *if_chain_matched = true;
             render_targets(node, engine)
         });
     }
 
-    *in_if_chain = false;
+    *if_chain_active = false;
 
     // v-for
     directive_for.map(|expr| process_for(node, engine, &expr).unwrap_or_default())
 }
 
-struct ForSyntax {
-    alias: BindingAlias,
-    iter_expr: String,
+struct ForExpression {
+    binding: ForBinding,
+    iterable_expr: String,
 }
 
 // Process for directive
 fn process_for(node: &Handle, engine: &mut Engine, expr: &str) -> Option<Vec<Handle>> {
-    let syntax = parse_for_syntax(engine, expr)?;
+    let expression = parse_for_expression(engine, expr)?;
 
     let indent_opt = get_indent(node);
     let mut result_nodes = Vec::new();
+    let mut render_iteration = |engine: &mut Engine, slots: Vec<JsValue>| {
+        if engine.enter_scope().is_err() {
+            return;
+        }
+
+        if engine.bind_for_slots(&expression.binding, slots) {
+            process_for_iteration(node, engine, &indent_opt, &mut result_nodes);
+        }
+
+        engine.exit_scope();
+    };
 
     match engine
-        .eval_expr(syntax.iter_expr.trim())
+        .eval_expr(expression.iterable_expr.trim())
         .map(|val| val.variant())
     {
         Ok(JsVariant::Object(obj)) if obj.is_array() => {
@@ -414,77 +426,34 @@ fn process_for(node: &Handle, engine: &mut Engine, expr: &str) -> Option<Vec<Han
                 let PropertyKey::Index(index) = property_key else {
                     continue;
                 };
-                if engine.enter_scope().is_err() {
-                    continue;
-                }
 
                 let item = obj
                     .get(property_key.clone(), &mut engine.context)
                     .unwrap_or(JsValue::undefined());
-                if !engine.bind_alias(&syntax.alias, [item, JsValue::new(index.get())]) {
-                    engine.exit_scope();
-                    continue;
-                }
-
-                process_for_iteration(node, engine, &indent_opt, &mut result_nodes);
-
-                engine.exit_scope();
+                render_iteration(engine, vec![item, JsValue::new(index.get())]);
             }
         }
         Ok(JsVariant::Object(obj)) => {
             let property_keys = obj.own_property_keys(&mut engine.context).ok()?;
 
             for (idx, property_key) in property_keys.iter().enumerate() {
-                if engine.enter_scope().is_err() {
-                    continue;
-                }
-
                 let value = obj
                     .get(property_key.clone(), &mut engine.context)
                     .unwrap_or(JsValue::undefined());
-                if !engine.bind_alias(
-                    &syntax.alias,
-                    [value, property_key.into(), JsValue::new(idx as i32)],
-                ) {
-                    engine.exit_scope();
-                    continue;
-                }
-
-                process_for_iteration(node, engine, &indent_opt, &mut result_nodes);
-
-                engine.exit_scope();
+                render_iteration(
+                    engine,
+                    vec![value, property_key.into(), JsValue::new(idx as i32)],
+                );
             }
         }
         Ok(JsVariant::Integer32(val)) => {
             for (idx, num) in (1..=val).enumerate() {
-                if engine.enter_scope().is_err() {
-                    continue;
-                }
-
-                if !engine.bind_alias(&syntax.alias, [JsValue::new(num), JsValue::new(idx)]) {
-                    engine.exit_scope();
-                    continue;
-                }
-
-                process_for_iteration(node, engine, &indent_opt, &mut result_nodes);
-
-                engine.exit_scope();
+                render_iteration(engine, vec![JsValue::new(num), JsValue::new(idx)]);
             }
         }
         Ok(JsVariant::String(val)) => {
             for (idx, ch) in val.to_std_string_escaped().chars().enumerate() {
-                if engine.enter_scope().is_err() {
-                    continue;
-                }
-
-                if !engine.bind_alias(&syntax.alias, [JsValue::new(ch), JsValue::new(idx)]) {
-                    engine.exit_scope();
-                    continue;
-                }
-
-                process_for_iteration(node, engine, &indent_opt, &mut result_nodes);
-
-                engine.exit_scope();
+                render_iteration(engine, vec![JsValue::new(ch), JsValue::new(idx)]);
             }
         }
         _ => {}
@@ -493,18 +462,18 @@ fn process_for(node: &Handle, engine: &mut Engine, expr: &str) -> Option<Vec<Han
     Some(result_nodes)
 }
 
-fn parse_for_syntax(engine: &mut Engine, expr: &str) -> Option<ForSyntax> {
-    for (aliases_raw, iter_expr) in split_for_expressions(expr) {
-        let aliases_raw = aliases_raw.trim();
-        let aliases_raw = if aliases_raw.starts_with('(') && aliases_raw.ends_with(')') {
-            aliases_raw[1..aliases_raw.len() - 1].trim()
+fn parse_for_expression(engine: &mut Engine, expr: &str) -> Option<ForExpression> {
+    for (binding_raw, iterable_expr) in split_for_expressions(expr) {
+        let binding_raw = binding_raw.trim();
+        let binding_raw = if binding_raw.starts_with('(') && binding_raw.ends_with(')') {
+            binding_raw[1..binding_raw.len() - 1].trim()
         } else {
-            aliases_raw
+            binding_raw
         };
-        if let Some(alias) = engine.parse_binding_alias(aliases_raw) {
-            return Some(ForSyntax {
-                alias,
-                iter_expr: iter_expr.trim().to_string(),
+        if let Some(binding) = engine.parse_for_binding(binding_raw) {
+            return Some(ForExpression {
+                binding,
+                iterable_expr: iterable_expr.trim().to_string(),
             });
         }
     }
