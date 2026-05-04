@@ -272,3 +272,101 @@ fn test_bind_object_literal() {
     </body></html>"#;
     assert_eq!(output, expected);
 }
+
+// === Class / Style Normalization ===
+
+#[test]
+fn test_bind_class_merges_static_and_object() {
+    let input = r#"
+    <div>
+        <p class="base" :class="{ active: true, hidden: false, titled: id }">elem</p>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <p class="base active titled">elem</p>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_bind_class_array() {
+    let input = r#"
+    <div>
+        <p :class="['btn', [id, { active: true, hidden: false }], null]">elem</p>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <p class="btn title active">elem</p>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_bind_object_class_merges_static() {
+    let input = r#"
+    <div>
+        <p class="base" v-bind="{ class: ['from-bind', { active: true }], id }">elem</p>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <p class="base from-bind active" id="title">elem</p>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_bind_style_merges_static_and_object() {
+    let input = r#"
+    <div>
+        <p style="color: red" :style="{ fontSize: '12px', 'line-height': 1.5, '--gap': '4px', display: null }">elem</p>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <p style="color: red; font-size: 12px; line-height: 1.5; --gap: 4px;">elem</p>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_bind_style_array() {
+    let input = r#"
+    <div>
+        <p :style="['color: red', { fontSize: '12px' }, { marginTop: value + 'px' }]">elem</p>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <p style="color: red; font-size: 12px; margin-top: 333px;">elem</p>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_bind_object_style_merges_static() {
+    let input = r#"
+    <div>
+        <p style="color: red;" v-bind="{ style: [{ fontSize: '12px' }, 'background: blue'], id }">elem</p>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <p style="color: red; font-size: 12px; background: blue" id="title">elem</p>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}

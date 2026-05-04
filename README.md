@@ -62,7 +62,7 @@ let output = render(html, data).unwrap();
 |---|---|---|
 | `{{ }}` | ✅ |  |
 | `<template>` | ✅ |  |
-| `v-bind`, `:attr` | 🟡 | No class/style normalization |
+| `v-bind`, `:attr` | ✅ |  |
 | `v-if` | ✅ |  |
 | `v-else` | ✅ |  |
 | `v-else-if` | ✅ |  |

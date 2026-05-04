@@ -1,3 +1,10 @@
+use std::{
+    cell::RefCell,
+    rc::{Rc, Weak},
+    str::FromStr,
+    sync::LazyLock,
+};
+
 use boa_engine::{JsValue, JsVariant, property::PropertyKey};
 use html5ever::{
     QualName,
@@ -8,15 +15,12 @@ use html5ever::{
 use markup5ever_rcdom::{Handle, Node, NodeData, RcDom, SerializableHandle};
 use regex::Regex;
 use serde::Serialize;
-use std::cell::RefCell;
-use std::rc::{Rc, Weak};
-use std::str::FromStr;
-use std::sync::LazyLock;
+use serde_json::Value as JsonValue;
 
 mod engine;
 use engine::{Engine, ForBinding};
 
-static SYNTAX_MUSTACHE: LazyLock<Regex> =
+static MUSTACHE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?s)\{\{\s*(.+?)\s*\}\}").unwrap());
 
 /// Render HTML template with data
@@ -143,19 +147,23 @@ fn process_node_content(handle: &Handle, engine: &mut Engine) {
 
                 // v-bind object spread: v-bind="obj" or v-bind="{ key: value }"
                 if name_ref == "v-bind" {
-                    if let Ok(js_val) = engine.eval_expr(attr.value.as_ref())
-                        && let Ok(Some(json_val)) = js_val.to_json(&mut engine.context)
+                    if let Some(json_val) = eval_json(engine, attr.value.as_ref())
                         && let Some(obj) = json_val.as_object()
                     {
                         for (key, val) in obj.iter() {
-                            if val.is_null() {
-                                continue;
+                            let value = match key.as_str() {
+                                "class" => normalize_class(val),
+                                "style" => normalize_style(val),
+                                _ if val.is_null() => None,
+                                _ => Some(
+                                    val.as_str()
+                                        .map(str::to_string)
+                                        .unwrap_or_else(|| val.to_string()),
+                                ),
+                            };
+                            if let Some(value) = value {
+                                additions.push((key.clone(), attr.name.clone(), value));
                             }
-                            let value_str = val
-                                .as_str()
-                                .map(str::to_string)
-                                .unwrap_or_else(|| val.to_string());
-                            additions.push((key.clone(), attr.name.clone(), value_str));
                         }
                         removals.push(i);
                     }
@@ -185,9 +193,21 @@ fn process_node_content(handle: &Handle, engine: &mut Engine) {
                         } else {
                             value_expr
                         };
-                        match engine.eval_fmt(target) {
-                            Some(value) => renames.push((i, arg_raw.to_string(), value)),
-                            None => removals.push(i),
+                        if matches!(arg_raw, "class" | "style") {
+                            let value = eval_json(engine, target).and_then(|val| match arg_raw {
+                                "class" => normalize_class(&val),
+                                "style" => normalize_style(&val),
+                                _ => None,
+                            });
+                            if let Some(value) = value {
+                                additions.push((arg_raw.to_string(), attr.name.clone(), value));
+                            }
+                            removals.push(i);
+                        } else {
+                            match engine.eval_fmt(target) {
+                                Some(value) => renames.push((i, arg_raw.to_string(), value)),
+                                None => removals.push(i),
+                            }
                         }
                     }
                 }
@@ -204,13 +224,18 @@ fn process_node_content(handle: &Handle, engine: &mut Engine) {
             }
             drop(attrs_mut);
 
+            let mut attrs_mut = attrs.borrow_mut();
             for (local_name, template_qn, value) in additions.iter() {
-                let mut attrs_mut = attrs.borrow_mut();
                 if let Some(existing) = attrs_mut
                     .iter_mut()
                     .find(|a| a.name.local.as_ref() == local_name.as_str())
                 {
-                    existing.value = StrTendril::from_str(value.as_str()).unwrap();
+                    let merged = match local_name.as_str() {
+                        "class" => merge_class(existing.value.as_ref(), value),
+                        "style" => merge_style(existing.value.as_ref(), value),
+                        _ => value.clone(),
+                    };
+                    existing.value = StrTendril::from_str(merged.as_str()).unwrap();
                 } else {
                     attrs_mut.push(html5ever::Attribute {
                         name: QualName::new(
@@ -225,7 +250,7 @@ fn process_node_content(handle: &Handle, engine: &mut Engine) {
         }
         NodeData::Text { contents } => {
             let mut content = contents.borrow_mut();
-            let replacements: Vec<(std::ops::Range<usize>, String)> = SYNTAX_MUSTACHE
+            let replacements: Vec<(std::ops::Range<usize>, String)> = MUSTACHE
                 .captures_iter(&content)
                 .filter_map(|capture| {
                     let range = capture.get(0)?.range();
@@ -243,6 +268,120 @@ fn process_node_content(handle: &Handle, engine: &mut Engine) {
             }
         }
         _ => (),
+    }
+}
+
+fn eval_json(engine: &mut Engine, code: &str) -> Option<JsonValue> {
+    engine
+        .eval_expr(code)
+        .ok()?
+        .to_json(&mut engine.context)
+        .ok()?
+}
+
+fn normalize_class(value: &JsonValue) -> Option<String> {
+    fn collect(value: &JsonValue, classes: &mut Vec<String>) {
+        match value {
+            JsonValue::String(value) => {
+                let value = value.trim();
+                if !value.is_empty() {
+                    classes.push(value.to_string());
+                }
+            }
+            JsonValue::Array(values) => {
+                for value in values {
+                    collect(value, classes);
+                }
+            }
+            JsonValue::Object(values) => {
+                for (name, enabled) in values {
+                    if json_truthy(enabled) {
+                        classes.push(name.clone());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut classes = Vec::new();
+    collect(value, &mut classes);
+    (!classes.is_empty()).then(|| classes.join(" "))
+}
+
+fn normalize_style(value: &JsonValue) -> Option<String> {
+    match value {
+        JsonValue::String(value) => {
+            let value = value.trim();
+            (!value.is_empty()).then(|| value.to_string())
+        }
+        JsonValue::Array(values) => values
+            .iter()
+            .filter_map(normalize_style)
+            .reduce(|merged, value| merge_style(&merged, &value)),
+        JsonValue::Object(values) => {
+            let styles = values
+                .iter()
+                .filter_map(|(name, value)| {
+                    style_value(value)
+                        .map(|value| format!("{}: {};", css_property_name(name), value))
+                })
+                .collect::<Vec<_>>();
+            (!styles.is_empty()).then(|| styles.join(" "))
+        }
+        _ => None,
+    }
+}
+
+fn style_value(value: &JsonValue) -> Option<String> {
+    match value {
+        JsonValue::String(value) if !value.is_empty() => Some(value.clone()),
+        JsonValue::Number(value) => Some(value.to_string()),
+        JsonValue::Array(values) => values.iter().rev().find_map(style_value),
+        _ => None,
+    }
+}
+
+fn css_property_name(name: &str) -> String {
+    if name.starts_with("--") {
+        return name.to_string();
+    }
+
+    name.chars().fold(String::new(), |mut property, ch| {
+        if ch.is_ascii_uppercase() {
+            property.push('-');
+            property.push(ch.to_ascii_lowercase());
+        } else {
+            property.push(ch);
+        }
+        property
+    })
+}
+
+fn json_truthy(value: &JsonValue) -> bool {
+    match value {
+        JsonValue::Null => false,
+        JsonValue::Bool(value) => *value,
+        JsonValue::Number(value) => value.as_f64().is_some_and(|value| value != 0.0),
+        JsonValue::String(value) => !value.is_empty(),
+        JsonValue::Array(_) | JsonValue::Object(_) => true,
+    }
+}
+
+fn merge_class(existing: &str, value: &str) -> String {
+    match (existing.trim(), value.trim()) {
+        ("", value) => value.to_string(),
+        (existing, "") => existing.to_string(),
+        (existing, value) => format!("{existing} {value}"),
+    }
+}
+
+fn merge_style(existing: &str, value: &str) -> String {
+    match (existing.trim(), value.trim()) {
+        ("", value) => value.to_string(),
+        (existing, "") => existing.to_string(),
+        (existing, value) if existing.ends_with(';') => format!("{existing} {value}"),
+        (existing, value) => format!("{existing}; {value}"),
     }
 }
 
