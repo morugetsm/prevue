@@ -140,6 +140,89 @@ fn test_mustache_object() {
     assert_eq!(output, expected);
 }
 
+// === Data Alias ===
+
+#[test]
+fn test_data_alias_mustache() {
+    let input = r#"
+    <div>
+        <div>{{ user.name }}</div>
+        <div>{{ $.user.name }}</div>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <div>Alice</div>
+        <div>Alice</div>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_data_alias_directives() {
+    let input = r#"
+    <div>
+        <p v-if="$.user.age >= 18">{{ $.user.name }}</p>
+        <ul>
+            <li v-for="item in $.list" :data-id="$.user.name">{{ item }}</li>
+        </ul>
+    </div>
+    "#;
+    let output = render(input.to_string(), data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <p>Alice</p>
+        <ul>
+            <li data-id="Alice">1</li>
+            <li data-id="Alice">2</li>
+            <li data-id="Alice">3</li>
+        </ul>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_data_alias_non_object() {
+    let input = r#"
+    <div>{{ $ }}</div>
+    "#;
+    let output = render(input.to_string(), json!(["a", "b"])).unwrap();
+
+    let expected = r#"<html><head></head><body><div>[ "a", "b" ]</div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_data_alias_reserved_collision() {
+    let input = r#"
+    <div>
+        <p>{{ $.user.name }}</p>
+        <p>{{ $["$"] }}</p>
+    </div>
+    "#;
+    let output = render(
+        input.to_string(),
+        json!({
+            "$": "custom",
+            "user": {
+                "name": "Alice",
+            },
+        }),
+    )
+    .unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <p>Alice</p>
+        <p>custom</p>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
 #[test]
 fn test_mustache_falsy() {
     let input = r#"
@@ -247,7 +330,7 @@ fn test_mustache_comment() {
 
 #[test]
 fn test_mustache_this_json() {
-    // JSON.stringify(this) exposes the engine's global scope object.
+    // JSON.stringify(this) exposes internal scope details; keep the assertion loose.
     let input = r#"
     <div>
         {{ JSON.stringify(this) }}
@@ -255,11 +338,8 @@ fn test_mustache_this_json() {
     "#;
     let output = render(input.to_string(), data()).unwrap();
 
-    let expected = r#"<html><head></head><body><div>
-        {"__scope_0":{"list":[1,2,3],"user":{"name":"Alice","age":21}}}
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    assert!(output.contains(r#""__scope_0""#));
+    assert!(output.contains(r#""$":{"list":[1,2,3],"user":{"name":"Alice","age":21}}"#));
 }
 
 #[test]

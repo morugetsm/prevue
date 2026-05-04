@@ -87,6 +87,7 @@ This library uses a [Boa](https://github.com/boa-dev/boa) JavaScript engine to e
 
 - ⚠️ **Security:** Never use untrusted templates or data.
 - **Evaluation Behavior:** Unlike Vue, which restricts each binding to a single expression, prevue currently allows both expressions and statements in all binding contexts (e.g., `:x="let n = 1; n + 1"` and `{{ let n = 1; n + 1 }}` → `2`). This may change in future versions to match Vue's behavior.
+- **Data Alias:** Top-level object fields are available directly, and the original data is also available as `$` (e.g., `{{ user.name }}` and `{{ $.user.name }}`). `$` is a reserved alias for the full data value; if your data contains a top-level `"$"` field, access it with `$["$"]`.
 - **Variable Access:** Accessing undeclared identifiers will cause the entire expression evaluation to fail, rather than returning `undefined`. Always ensure that variables exist in the provided data.
 - **`this` Context:** `this` is not Vue-compatible and may expose internal scope objects. Using `this` in templates is not recommended.
 

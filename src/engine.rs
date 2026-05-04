@@ -39,12 +39,16 @@ impl Engine {
 
         engine.enter_scope().unwrap();
 
-        if let Ok(json) = serde_json::to_value(data)
-            && let Some(obj) = json.as_object()
-        {
-            for (key, value) in obj.iter() {
-                if let Ok(val) = JsValue::from_json(value, &mut engine.context) {
-                    engine.set_val(key.as_str(), val);
+        if let Ok(json) = serde_json::to_value(data) {
+            if let Ok(val) = JsValue::from_json(&json, &mut engine.context) {
+                engine.set_val("$", val);
+            }
+
+            if let Some(obj) = json.as_object() {
+                for (key, value) in obj.iter().filter(|(key, _)| key.as_str() != "$") {
+                    if let Ok(val) = JsValue::from_json(value, &mut engine.context) {
+                        engine.set_val(key.as_str(), val);
+                    }
                 }
             }
         }
