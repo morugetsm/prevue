@@ -19,7 +19,7 @@ fn test_pre_basic() {
         <div v-pre>PRE</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>PRE</div>
@@ -35,7 +35,7 @@ fn test_pre_empty() {
         <div v-pre></div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div></div>
@@ -53,7 +53,7 @@ fn test_pre_with_mustache() {
         <div v-pre>{{ message }} {{ count }}</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>{{ message }} {{ count }}</div>
@@ -72,7 +72,7 @@ fn test_pre_multiline() {
         </div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>
@@ -93,7 +93,7 @@ fn test_pre_with_if() {
         <div v-pre v-if="isVisible">{{ message }}</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div v-if="isVisible">{{ message }}</div>
@@ -109,7 +109,7 @@ fn test_pre_with_bind() {
         <div v-pre :id="elementId">{{ message }}</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div :id="elementId">{{ message }}</div>
@@ -131,7 +131,7 @@ fn test_pre_with_nested_directives() {
         </div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>
@@ -154,7 +154,7 @@ fn test_pre_nested_pre() {
         </div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>
@@ -177,7 +177,7 @@ fn test_pre_sibling_elements() {
         <p>{{ message }}</p>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <p>Hello, world!</p>

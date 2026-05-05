@@ -15,6 +15,8 @@ use boa_parser::{Parser, Source as ParserSource};
 use serde::Serialize;
 use serde_json::Value as JsonValue;
 
+use crate::{Error, Result};
+
 #[derive(Clone, Debug)]
 pub(crate) struct ForBinding {
     pattern: String,
@@ -29,7 +31,7 @@ pub(crate) struct Engine {
 }
 
 impl Engine {
-    pub fn new(data: impl Serialize) -> Self {
+    pub fn new(data: impl Serialize) -> Result<Self> {
         let mut engine = Self {
             context: Context::default(),
             scope_keys: Default::default(),
@@ -37,23 +39,32 @@ impl Engine {
             binding_next: AtomicUsize::new(0),
         };
 
-        engine.enter_scope().unwrap();
+        engine.enter_scope().map_err(|err| Error::Scope {
+            message: err.to_string(),
+        })?;
 
-        if let Ok(json) = serde_json::to_value(data) {
-            if let Ok(val) = JsValue::from_json(&json, &mut engine.context) {
-                engine.set_val("$", val);
-            }
+        let json = serde_json::to_value(data).map_err(|source| Error::DataSerialize { source })?;
+        let inject = |engine: &mut Self, key: &str, value: &JsonValue, field: Option<String>| {
+            let val =
+                JsValue::from_json(value, &mut engine.context).map_err(|err| Error::DataToJs {
+                    field: field.clone(),
+                    message: err.to_string(),
+                })?;
+            engine.set_val(key, val).map_err(|err| Error::DataInject {
+                field,
+                message: err.to_string(),
+            })
+        };
 
-            if let Some(obj) = json.as_object() {
-                for (key, value) in obj.iter().filter(|(key, _)| key.as_str() != "$") {
-                    if let Ok(val) = JsValue::from_json(value, &mut engine.context) {
-                        engine.set_val(key.as_str(), val);
-                    }
-                }
+        inject(&mut engine, "$", &json, None)?;
+
+        if let Some(obj) = json.as_object() {
+            for (key, value) in obj.iter().filter(|(key, _)| key.as_str() != "$") {
+                inject(&mut engine, key.as_str(), value, Some(key.clone()))?;
             }
         }
 
-        engine
+        Ok(engine)
     }
 
     pub fn enter_scope(&mut self) -> JsResult<()> {
@@ -82,17 +93,18 @@ impl Engine {
         }
     }
 
-    pub fn set_val(&mut self, key: &str, value: JsValue) {
+    pub fn set_val(&mut self, key: &str, value: JsValue) -> JsResult<()> {
         let mut scope = self.context.global_object();
 
-        if let Some(scope_key) = self.scope_keys.last()
-            && let Ok(scope_val) = scope.get(JsString::from(scope_key.as_str()), &mut self.context)
-            && let Some(local) = scope_val.as_object()
-        {
-            scope = local;
+        if let Some(scope_key) = self.scope_keys.last() {
+            let scope_val = scope.get(JsString::from(scope_key.as_str()), &mut self.context)?;
+            if let Some(local) = scope_val.as_object() {
+                scope = local;
+            }
         }
 
-        let _ = scope.set(JsString::from(key), value, false, &mut self.context);
+        scope.set(JsString::from(key), value, false, &mut self.context)?;
+        Ok(())
     }
 
     pub fn parse_for_binding(&mut self, pattern: &str) -> Option<ForBinding> {

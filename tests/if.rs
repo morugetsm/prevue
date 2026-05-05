@@ -1,4 +1,4 @@
-use prevue::render;
+use prevue::{Directive, DirectiveErrorKind, Error, render};
 use serde_json::{Value, json};
 
 fn data() -> Value {
@@ -23,7 +23,7 @@ fn test_if_basic() {
         <div v-if="list">LIST</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <p>Hello, world!</p>
@@ -43,7 +43,7 @@ fn test_if_truthy_cast() {
         <div v-if="list">array is true</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>array is true</div>
@@ -54,10 +54,10 @@ fn test_if_truthy_cast() {
 
 #[test]
 fn test_if_edge_cases() {
-    // empty string, null, undefined, NaN are falsy; Infinity is truthy
+    // empty string literal, null, undefined, NaN are falsy; Infinity is truthy
     let input = r#"
     <div>
-        <div v-if="">empty</div>
+        <div v-if="''">empty string</div>
         <div v-if="null">null</div>
         <div v-if="undefined">undefined</div>
         <div v-if="NaN">NaN</div>
@@ -65,10 +65,28 @@ fn test_if_edge_cases() {
         <div v-if="notexist">notexist</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>Infinity</div>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_else_if_empty_string_literal_is_falsy() {
+    let input = r#"
+    <div>
+        <div v-if="false">IF</div>
+        <div v-else-if="''">ELSE-IF</div>
+        <div v-else>ELSE</div>
+    </div>
+    "#;
+    let output = render(input, data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <div>ELSE</div>
     </div>
     </body></html>"#;
     assert_eq!(output, expected);
@@ -85,7 +103,7 @@ fn test_if_expression() {
         <p v-if="user.age < 18">minor</p>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <p>Alice (21)</p>
@@ -98,40 +116,72 @@ fn test_if_expression() {
 
 #[test]
 fn test_if_with_else_on_same_element() {
-    // v-if and v-else on the same element: v-if always takes precedence regardless of attribute order
     let input = r#"
     <div>
         <div v-if="true" v-else>first</div>
         <div v-else v-if="true">second</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        <div>first</div>
-        <div>second</div>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    let err = render(input, data()).unwrap_err();
+    assert!(matches!(err, Error::ConflictingDirectives { directives }
+            if directives == vec![Directive::If, Directive::Else]));
 }
 
 #[test]
 fn test_if_with_else_if_on_same_element() {
-    // v-if and v-else-if on the same element: v-if always takes precedence regardless of attribute order
     let input = r#"
     <div>
         <div v-if="true" v-else-if="false">first</div>
         <div v-else-if="false" v-if="true">second</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let err = render(input, data()).unwrap_err();
+    assert!(matches!(err, Error::ConflictingDirectives { directives }
+            if directives == vec![Directive::If, Directive::ElseIf]));
+}
 
-    let expected = r#"<html><head></head><body><div>
-        <div>first</div>
-        <div>second</div>
+#[test]
+fn test_if_empty_expression_error() {
+    let input = r#"
+    <div>
+        <div v-if="">empty</div>
     </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    "#;
+    let err = render(input, data()).unwrap_err();
+    assert!(
+        matches!(err, Error::InvalidDirective { directive: Directive::If, kind: DirectiveErrorKind::MissingExpression, expression: Some(expr) }
+            if expr.is_empty())
+    );
+}
+
+#[test]
+fn test_else_if_empty_expression_error() {
+    let input = r#"
+    <div>
+        <div v-if="false">IF</div>
+        <div v-else-if="">empty</div>
+    </div>
+    "#;
+    let err = render(input, data()).unwrap_err();
+    assert!(
+        matches!(err, Error::InvalidDirective { directive: Directive::ElseIf, kind: DirectiveErrorKind::MissingExpression, expression: Some(expr) }
+            if expr.is_empty())
+    );
+}
+
+#[test]
+fn test_else_with_expression_error() {
+    let input = r#"
+    <div>
+        <div v-if="false">IF</div>
+        <div v-else="ok">ELSE</div>
+    </div>
+    "#;
+    let err = render(input, data()).unwrap_err();
+    assert!(
+        matches!(err, Error::InvalidDirective { directive: Directive::Else, kind: DirectiveErrorKind::UnexpectedExpression, expression: Some(expr) }
+            if expr == "ok")
+    );
 }
 
 // === Priority over v-for ===
@@ -144,7 +194,7 @@ fn test_if_takes_priority_over_for() {
         <div v-if="true" v-for="item in list">IF</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>IF</div>
@@ -162,7 +212,7 @@ fn test_if_for_scope_unavailable() {
         <div v-for="item in list" v-if="item > 1">IF{{ item }}</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
     </div>

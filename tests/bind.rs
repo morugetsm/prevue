@@ -28,7 +28,7 @@ fn test_bind_basic() {
         <h2 :value="value">h2 elem</h2>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <h1 id="title">h1 elem</h1>
@@ -47,7 +47,7 @@ fn test_bind_same_name_shorthand() {
         <h2 :value>foo</h2>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <h1 id="title">h1 elem</h1>
@@ -68,7 +68,7 @@ fn test_bind_dynamic_key() {
         <h2 :[value]="value">h2 elem</h2>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <h1 title="title">h1 elem</h1>
@@ -87,7 +87,7 @@ fn test_bind_dynamic_key_no_value() {
         <h2 :[value]>h2 elem</h2>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <h1>h1 elem</h1>
@@ -106,7 +106,7 @@ fn test_bind_dynamic_key_unclosed() {
         <h2 :value]="value">h2 elem</h2>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <h1 [id="title">h1 elem</h1>
@@ -128,7 +128,7 @@ fn test_bind_dynamic_key_lowercase() {
         <h5 :[dynamic-key]="value">link</h5>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <h1>data-id</h1>
@@ -152,7 +152,7 @@ fn test_bind_expression() {
         <h2 :calc="value * 2">h2 elem</h2>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <h1 format="hello title">h1 elem</h1>
@@ -171,7 +171,7 @@ fn test_bind_statement() {
         <h2 :calc="let y = 2; y * 2">h2 elem</h2>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <h1 format="2">h1 elem</h1>
@@ -192,7 +192,7 @@ fn test_bind_null_undefined() {
         <h2 :bar="undefined">h2 elem</h2>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <h1>h1 elem</h1>
@@ -212,7 +212,7 @@ fn test_bind_false_kept() {
         <h1 :foo="false">h1 elem</h1>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <h1 foo="false">h1 elem</h1>
@@ -231,7 +231,7 @@ fn test_bind_object() {
         <span v-bind="attrs"></span>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <span str="hello" num="123" truthy="true" falsy="false"></span>
@@ -248,7 +248,7 @@ fn test_bind_object_overrides_existing_attr() {
         <span str="old" v-bind="attrs">elem</span>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <span str="hello" num="123" truthy="true" falsy="false">elem</span>
@@ -264,7 +264,7 @@ fn test_bind_object_literal() {
         <span v-bind="{ id, value: value * 2, hidden: null, skip: undefined, ok: false }">elem</span>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <span id="title" value="666" ok="false">elem</span>
@@ -282,7 +282,7 @@ fn test_bind_class_merges_static_and_object() {
         <p class="base" :class="{ active: true, hidden: false, titled: id }">elem</p>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <p class="base active titled">elem</p>
@@ -298,7 +298,7 @@ fn test_bind_class_array() {
         <p :class="['btn', [id, { active: true, hidden: false }], null]">elem</p>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <p class="btn title active">elem</p>
@@ -314,7 +314,7 @@ fn test_bind_object_class_merges_static() {
         <p class="base" v-bind="{ class: ['from-bind', { active: true }], id }">elem</p>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <p class="base from-bind active" id="title">elem</p>
@@ -330,7 +330,7 @@ fn test_bind_style_merges_static_and_object() {
         <p style="color: red" :style="{ fontSize: '12px', 'line-height': 1.5, '--gap': '4px', display: null }">elem</p>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <p style="color: red; font-size: 12px; line-height: 1.5; --gap: 4px;">elem</p>
@@ -346,7 +346,7 @@ fn test_bind_style_array() {
         <p :style="['color: red', { fontSize: '12px' }, { marginTop: value + 'px' }]">elem</p>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <p style="color: red; font-size: 12px; margin-top: 333px;">elem</p>
@@ -362,7 +362,7 @@ fn test_bind_object_style_merges_static() {
         <p style="color: red;" v-bind="{ style: [{ fontSize: '12px' }, 'background: blue'], id }">elem</p>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <p style="color: red; font-size: 12px; background: blue" id="title">elem</p>

@@ -23,7 +23,7 @@ fn test_template_basic() {
         <template>Hello</template>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <template></template>
@@ -41,7 +41,7 @@ fn test_template_if() {
         <template v-if="true">Hello</template>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         Hello
@@ -59,7 +59,7 @@ fn test_template_if_chain() {
         <template v-else>C</template>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         B
@@ -77,7 +77,7 @@ fn test_template_for() {
         <template v-for="item in list">{{ item }}</template>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         1
@@ -101,7 +101,7 @@ fn test_template_for_destructuring() {
             { "foo": "b" }
         ],
     });
-    let output = render(input.to_string(), data).unwrap();
+    let output = render(input, data).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         a
@@ -118,7 +118,7 @@ fn test_template_for_empty() {
         <template v-for="item in list"></template>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
     </div>
@@ -135,7 +135,7 @@ fn test_template_for_element() {
         </template>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>1</div>
@@ -157,7 +157,7 @@ fn test_template_for_element_linebreak() {
         </template>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>
@@ -185,7 +185,7 @@ fn test_template_for_element_linebreak_with_less_indent() {
     </template>
   </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
     <div>
@@ -214,7 +214,7 @@ fn test_template_for_complex() {
         </template>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <h1>0: [object Object]</h1>
@@ -237,7 +237,7 @@ fn test_template_for_object_with_key_index() {
         </template>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <p>[0] a: 1</p>
@@ -258,7 +258,7 @@ fn test_template_for_with_inner_if() {
         </template>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <span>1</span>
@@ -281,7 +281,7 @@ fn test_template_for_trims_whitespace_children() {
         </template>
     </div>
     "#;
-    let output = render(input.to_string(), Value::Null).unwrap();
+    let output = render(input, Value::Null).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <em>1</em>
@@ -302,7 +302,7 @@ fn test_template_pre() {
         </template>
     </div>
     "#;
-    let output = render(input.to_string(), Value::Null).unwrap();
+    let output = render(input, Value::Null).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <template></template>
@@ -320,7 +320,7 @@ fn test_template_pre_inner() {
         </div>
     </div>
     "#;
-    let output = render(input.to_string(), Value::Null).unwrap();
+    let output = render(input, Value::Null).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>
@@ -338,7 +338,7 @@ fn test_template_pre_with_if() {
         <template v-pre v-if="false">Hello</template>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <template v-if="false"></template>
@@ -356,7 +356,7 @@ fn test_template_no_directive_with_attrs() {
         <template data-x="y">IGNORED</template>
     </div>
     "#;
-    let output = render(input.to_string(), Value::Null).unwrap();
+    let output = render(input, Value::Null).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <template data-x="y"></template>

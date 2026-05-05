@@ -1,4 +1,4 @@
-use prevue::render;
+use prevue::{Directive, DirectiveErrorKind, Error, render};
 use serde_json::{Value, json};
 
 fn data() -> Value {
@@ -23,7 +23,7 @@ fn test_for_array() {
         <h4>{{ item }}</h4>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <h1>{{ notclosed }</h1>
@@ -44,7 +44,7 @@ fn test_for_array_of() {
         <div v-for="item of list">{{ item }}</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>1</div>
@@ -62,7 +62,7 @@ fn test_for_array_literal() {
         <div v-for="item, index in [10, 20, 30]">{{ `${index}: ${item}` }}</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>0: 10</div>
@@ -85,7 +85,7 @@ fn test_for_array_excess_arguments() {
         </div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>
@@ -121,7 +121,7 @@ fn test_for_object_destructuring_alias() {
             { "foo": "b", "bar": 2 }
         ],
     });
-    let output = render(input.to_string(), data).unwrap();
+    let output = render(input, data).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <p>a:1</p>
@@ -146,7 +146,7 @@ fn test_for_object_destructuring_nested_default_rest() {
             { "foo": "b", "nested": {}, "extra": "y" }
         ],
     });
-    let output = render(input.to_string(), data).unwrap();
+    let output = render(input, data).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <p>
@@ -173,7 +173,7 @@ fn test_for_array_destructuring_alias() {
             [5, 6]
         ],
     });
-    let output = render(input.to_string(), data).unwrap();
+    let output = render(input, data).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <p>1:2:2</p>
@@ -196,7 +196,7 @@ fn test_for_destructuring_with_index() {
             { "name": "Bob" }
         ],
     });
-    let output = render(input.to_string(), data).unwrap();
+    let output = render(input, data).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <p>0:Alice</p>
@@ -217,7 +217,7 @@ fn test_for_nested() {
         </div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>
@@ -255,7 +255,7 @@ fn test_for_object() {
         <h1 v-for="value, key in user">{{ `${key}: ${value}` }}</h1>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <h1>name: Alice</h1>
@@ -277,7 +277,7 @@ fn test_for_object_three_arguments() {
         </div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>
@@ -308,7 +308,7 @@ fn test_for_object_destructuring_key_index() {
             "bob": { "age": 22 }
         },
     });
-    let output = render(input.to_string(), data).unwrap();
+    let output = render(input, data).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <p>alice:0:21</p>
@@ -327,7 +327,7 @@ fn test_for_number_literal() {
         <div v-for="item in 5">{{ item }}</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>1</div>
@@ -347,7 +347,7 @@ fn test_for_number_variable() {
         <div v-for="item in user.age">{{ item }}</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>1</div>
@@ -383,7 +383,7 @@ fn test_for_number_with_index() {
         <div v-for="item, index in 3">{{ `${index}: ${item}` }}</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>0: 1</div>
@@ -401,7 +401,7 @@ fn test_for_number_zero() {
         <div v-for="item in 0">{{ item }}</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
     </div>
@@ -418,7 +418,7 @@ fn test_for_string_literal() {
         <div v-for="char in 'abc'">{{ char }}</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>a</div>
@@ -436,7 +436,7 @@ fn test_for_string_variable() {
         <div v-for="char in user.name">{{ char }}</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>A</div>
@@ -456,7 +456,7 @@ fn test_for_string_with_index() {
         <div v-for="char, index in 'xyz'">{{ `${index}: ${char}` }}</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>0: x</div>
@@ -474,7 +474,7 @@ fn test_for_string_empty() {
         <div v-for="char in ''">{{ char }}</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
     </div>
@@ -491,7 +491,7 @@ fn test_for_function_call() {
         <div v-for="key in Object.keys(user)">{{ key }}</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>name</div>
@@ -508,7 +508,7 @@ fn test_for_method_chaining() {
         <div v-for="item in list.filter(x => x > 1).map(x => x * 2)">{{ item }}</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>4</div>
@@ -525,7 +525,7 @@ fn test_for_expression() {
         <div v-for="n in Array(3).fill(0).map((_, i) => i + 1)">{{ n }}</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>1</div>
@@ -544,7 +544,7 @@ fn test_for_special_char_variables() {
         <div v-for="$, _ in list">{{ `${_}: ${$}` }}</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>0: 1</div>
@@ -565,7 +565,7 @@ fn test_for_with_comment() {
         <div v-for="item in list">b{{ item }}</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <!-- comment --><div>a1</div><div>a2</div><div>a3</div>
@@ -585,7 +585,7 @@ fn test_for_with_leading_empty_line() {
         <div v-for="item in list">{{ item }}</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         
@@ -605,7 +605,7 @@ fn test_for_with_trailing_empty_line() {
         
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>1</div>
@@ -624,7 +624,7 @@ fn test_for_empty() {
         <div v-for="item in []">{{ item }}</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
     </div>
@@ -639,7 +639,7 @@ fn test_for_with_leading_whitespace() {
         <div v-for="item in list">{{ item }}</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div> hi
         <div>1</div>
@@ -657,7 +657,7 @@ fn test_for_with_leading_polluted() {
     hi  <div v-for="item in list">{{ item }}</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div> hi
     hi  <div>1</div>
@@ -672,18 +672,16 @@ fn test_for_with_leading_polluted() {
 
 #[test]
 fn test_for_syntax_error() {
-    // Malformed v-for expression should safely do nothing (render 0 items)
     let input = r#"
     <div>
         <div v-for="Hello, world!">Hello, world!</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    let err = render(input, data()).unwrap_err();
+    assert!(
+        matches!(err, Error::InvalidDirective { directive: Directive::For, kind: DirectiveErrorKind::InvalidExpression, expression: Some(expr) }
+            if expr == "Hello, world!")
+    );
 }
 
 #[test]
@@ -693,7 +691,21 @@ fn test_for_destructuring_syntax_error() {
         <div v-for="{ foo: } in list">Hello, world!</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let err = render(input, data()).unwrap_err();
+    assert!(
+        matches!(err, Error::InvalidDirective { directive: Directive::For, kind: DirectiveErrorKind::InvalidExpression, expression: Some(expr) }
+            if expr == "{ foo: } in list")
+    );
+}
+
+#[test]
+fn test_for_missing_iterable_is_empty() {
+    let input = r#"
+    <div>
+        <div v-for="item in missing">{{ item }}</div>
+    </div>
+    "#;
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
     </div>

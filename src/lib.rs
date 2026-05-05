@@ -18,7 +18,9 @@ use serde::Serialize;
 use serde_json::Value as JsonValue;
 
 mod engine;
+mod error;
 use engine::{Engine, ForBinding};
+pub use error::{Directive, DirectiveErrorKind, Error, Result};
 
 static MUSTACHE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?s)\{\{\s*(.+?)\s*\}\}").unwrap());
@@ -36,11 +38,12 @@ static MUSTACHE: LazyLock<Regex> =
 /// let result = render(template, data).unwrap();
 /// assert!(result.contains("Hello"));
 /// ```
-pub fn render(template: impl AsRef<str>, data: impl Serialize) -> Result<String, anyhow::Error> {
+pub fn render(template: impl AsRef<str>, data: impl Serialize) -> Result<String> {
     let dom = parse_document(RcDom::default(), ParseOpts::default())
         .from_utf8()
-        .read_from(&mut template.as_ref().as_bytes())?;
-    let mut engine = Engine::new(data);
+        .read_from(&mut template.as_ref().as_bytes())
+        .map_err(|source| Error::ParseTemplate { source })?;
+    let mut engine = Engine::new(data)?;
     traverse(&Rc::clone(&dom.document), &mut engine)?;
 
     let mut buffer = Vec::new();
@@ -48,9 +51,10 @@ pub fn render(template: impl AsRef<str>, data: impl Serialize) -> Result<String,
         &mut buffer,
         &SerializableHandle::from(Rc::clone(&dom.document)),
         Default::default(),
-    )?;
+    )
+    .map_err(|source| Error::SerializeHtml { source })?;
 
-    let rendered = String::from_utf8(buffer)?;
+    let rendered = String::from_utf8(buffer).map_err(|source| Error::OutputUtf8 { source })?;
     Ok(rendered)
 }
 
@@ -75,12 +79,25 @@ fn text_content(handle: &Handle) -> String {
     text
 }
 
+fn take_v_pre(handle: &Handle) -> bool {
+    let NodeData::Element { attrs, .. } = &handle.data else {
+        return false;
+    };
+    find_and_remove_directive(attrs, "v-pre").is_some()
+}
+
 // Traverse and process a node. Returns whether the node should stay in output.
-fn traverse(handle: &Handle, engine: &mut Engine) -> anyhow::Result<bool> {
+fn traverse(handle: &Handle, engine: &mut Engine) -> Result<bool> {
+    if take_v_pre(handle) {
+        return Ok(true);
+    }
+
     if is_setup_script(handle) {
         engine
             .eval_setup(&text_content(handle))
-            .map_err(|err| anyhow::anyhow!("failed to execute prevue script: {err}"))?;
+            .map_err(|err| Error::SetupScript {
+                message: err.to_string(),
+            })?;
         return Ok(false);
     }
 
@@ -92,9 +109,19 @@ fn traverse(handle: &Handle, engine: &mut Engine) -> anyhow::Result<bool> {
     let mut if_chain_matched = false;
 
     for node in children.iter() {
-        if let NodeData::Element { attrs, .. } = &node.data
-            && find_and_remove_directive(attrs, "v-pre").is_some()
-        {
+        if take_v_pre(node) {
+            if_chain_active = false;
+            if_chain_matched = false;
+            continue;
+        }
+
+        let is_non_whitespace_text = is_non_whitespace_text_node(node);
+        if is_non_whitespace_text {
+            if_chain_active = false;
+            if_chain_matched = false;
+        }
+
+        if !matches!(&node.data, NodeData::Element { .. }) && !is_non_whitespace_text {
             continue;
         }
 
@@ -498,7 +525,7 @@ fn process_directives(
     engine: &mut Engine,
     if_chain_active: &mut bool,
     if_chain_matched: &mut bool,
-) -> anyhow::Result<Option<Vec<Handle>>> {
+) -> Result<Option<Vec<Handle>>> {
     let NodeData::Element { attrs, .. } = &node.data else {
         return Ok(None);
     };
@@ -507,18 +534,68 @@ fn process_directives(
     let directive_else_if = find_and_remove_directive(attrs, "v-else-if");
     let directive_else = find_and_remove_directive(attrs, "v-else");
     let directive_for = find_and_remove_directive(attrs, "v-for");
-    let render_targets = |node: &Handle, engine: &mut Engine| -> anyhow::Result<Vec<Handle>> {
+    let invalid_directive = |directive, kind, expression| Error::InvalidDirective {
+        directive,
+        kind,
+        expression,
+    };
+    let render_targets = |node: &Handle, engine: &mut Engine| -> Result<Vec<Handle>> {
         let mut rendered = Vec::new();
+        let mut child_if_chain_active = false;
+        let mut child_if_chain_matched = false;
+
         for target in expand_targets(node) {
-            if traverse(&target, engine)? {
+            if take_v_pre(&target) {
+                child_if_chain_active = false;
+                child_if_chain_matched = false;
+                rendered.push(target);
+                continue;
+            }
+
+            if is_non_whitespace_text_node(&target) {
+                child_if_chain_active = false;
+                child_if_chain_matched = false;
+            }
+
+            let replacement = process_directives(
+                &target,
+                engine,
+                &mut child_if_chain_active,
+                &mut child_if_chain_matched,
+            )?;
+
+            if let Some(nodes) = replacement {
+                rendered.extend(nodes);
+            } else if traverse(&target, engine)? {
                 rendered.push(target);
             }
         }
         Ok(rendered)
     };
 
+    let branch_directives = [
+        (directive_if.is_some(), Directive::If),
+        (directive_else_if.is_some(), Directive::ElseIf),
+        (directive_else.is_some(), Directive::Else),
+    ]
+    .into_iter()
+    .filter_map(|(has_directive, directive)| has_directive.then_some(directive))
+    .collect::<Vec<_>>();
+    if branch_directives.len() > 1 {
+        return Err(Error::ConflictingDirectives {
+            directives: branch_directives,
+        });
+    }
+
     // v-if
     if let Some(expr) = directive_if {
+        if expr.trim().is_empty() {
+            return Err(invalid_directive(
+                Directive::If,
+                DirectiveErrorKind::MissingExpression,
+                Some(expr),
+            ));
+        }
         *if_chain_active = true;
         *if_chain_matched = engine.eval_bool(&expr).unwrap_or(false);
         return Ok(Some(if *if_chain_matched {
@@ -530,8 +607,19 @@ fn process_directives(
 
     // v-else-if
     if let Some(expr) = directive_else_if {
+        if expr.trim().is_empty() {
+            return Err(invalid_directive(
+                Directive::ElseIf,
+                DirectiveErrorKind::MissingExpression,
+                Some(expr),
+            ));
+        }
         if !*if_chain_active {
-            return Ok(None);
+            return Err(invalid_directive(
+                Directive::ElseIf,
+                DirectiveErrorKind::MissingAdjacentConditional,
+                Some(expr),
+            ));
         }
         if *if_chain_matched {
             return Ok(Some(Vec::new()));
@@ -545,9 +633,20 @@ fn process_directives(
     }
 
     // v-else
-    if directive_else.is_some() {
+    if let Some(expr) = directive_else {
+        if !expr.trim().is_empty() {
+            return Err(invalid_directive(
+                Directive::Else,
+                DirectiveErrorKind::UnexpectedExpression,
+                Some(expr),
+            ));
+        }
         if !*if_chain_active {
-            return Ok(None);
+            return Err(invalid_directive(
+                Directive::Else,
+                DirectiveErrorKind::MissingAdjacentConditional,
+                None,
+            ));
         }
         *if_chain_active = false;
         return Ok(Some(if *if_chain_matched {
@@ -562,7 +661,7 @@ fn process_directives(
 
     // v-for
     Ok(match directive_for {
-        Some(expr) => Some(process_for(node, engine, &expr)?.unwrap_or_default()),
+        Some(expr) => Some(process_for(node, engine, &expr)?),
         None => None,
     })
 }
@@ -573,21 +672,19 @@ struct ForExpression {
 }
 
 // Process for directive
-fn process_for(
-    node: &Handle,
-    engine: &mut Engine,
-    expr: &str,
-) -> anyhow::Result<Option<Vec<Handle>>> {
-    let Some(expression) = parse_for_expression(engine, expr) else {
-        return Ok(None);
-    };
+fn process_for(node: &Handle, engine: &mut Engine, expr: &str) -> Result<Vec<Handle>> {
+    let expression = parse_for_expression(engine, expr).ok_or_else(|| Error::InvalidDirective {
+        directive: Directive::For,
+        kind: DirectiveErrorKind::InvalidExpression,
+        expression: Some(expr.to_string()),
+    })?;
 
     let indent_opt = get_indent(node);
     let mut result_nodes = Vec::new();
-    let mut render_iteration = |engine: &mut Engine, slots: Vec<JsValue>| -> anyhow::Result<()> {
-        if engine.enter_scope().is_err() {
-            return Ok(());
-        }
+    let mut render_iteration = |engine: &mut Engine, slots: Vec<JsValue>| -> Result<()> {
+        engine.enter_scope().map_err(|err| Error::Scope {
+            message: err.to_string(),
+        })?;
 
         let result = if engine.bind_for_slots(&expression.binding, slots) {
             process_for_iteration(node, engine, &indent_opt, &mut result_nodes)
@@ -605,7 +702,7 @@ fn process_for(
     {
         Ok(JsVariant::Object(obj)) if obj.is_array() => {
             let Some(keys) = obj.own_property_keys(&mut engine.context).ok() else {
-                return Ok(None);
+                return Ok(Vec::new());
             };
 
             for property_key in keys.iter() {
@@ -621,7 +718,7 @@ fn process_for(
         }
         Ok(JsVariant::Object(obj)) => {
             let Some(property_keys) = obj.own_property_keys(&mut engine.context).ok() else {
-                return Ok(None);
+                return Ok(Vec::new());
             };
 
             for (idx, property_key) in property_keys.iter().enumerate() {
@@ -647,7 +744,7 @@ fn process_for(
         _ => {}
     }
 
-    Ok(Some(result_nodes))
+    Ok(result_nodes)
 }
 
 fn parse_for_expression(engine: &mut Engine, expr: &str) -> Option<ForExpression> {
@@ -707,7 +804,7 @@ fn process_for_iteration(
     engine: &mut Engine,
     indent_opt: &Option<String>,
     result_nodes: &mut Vec<Handle>,
-) -> anyhow::Result<()> {
+) -> Result<()> {
     let targets = expand_targets(node);
     if targets.is_empty() {
         return Ok(());
@@ -724,19 +821,36 @@ fn process_for_iteration(
         nodes.push(node);
     };
 
+    let mut child_if_chain_active = false;
+    let mut child_if_chain_matched = false;
+
     for (target_idx, target) in targets.into_iter().enumerate() {
-        let mut dummy_in_chain = false;
-        let mut dummy_hit = false;
-        let replacement = process_directives(&target, engine, &mut dummy_in_chain, &mut dummy_hit)?;
+        if take_v_pre(&target) {
+            child_if_chain_active = false;
+            child_if_chain_matched = false;
+            let should_indent = target_idx > 0 && !iteration_nodes.is_empty();
+            push_node(&mut iteration_nodes, target, should_indent);
+            continue;
+        }
+
+        if is_non_whitespace_text_node(&target) {
+            child_if_chain_active = false;
+            child_if_chain_matched = false;
+        }
+
+        let replacement = process_directives(
+            &target,
+            engine,
+            &mut child_if_chain_active,
+            &mut child_if_chain_matched,
+        )?;
 
         match replacement {
             Some(new_nodes) => {
-                for (idx, new_node) in new_nodes.iter().enumerate() {
+                for (idx, new_node) in new_nodes.into_iter().enumerate() {
                     let should_indent =
                         (target_idx > 0 && idx == 0 && !iteration_nodes.is_empty()) || idx > 0;
-                    if traverse(new_node, engine)? {
-                        push_node(&mut iteration_nodes, Rc::clone(new_node), should_indent);
-                    }
+                    push_node(&mut iteration_nodes, new_node, should_indent);
                 }
             }
             None => {
@@ -952,6 +1066,14 @@ fn create_text_node(text: &str) -> Handle {
 fn is_whitespace_text_node(node: &Handle) -> bool {
     if let NodeData::Text { contents } = &node.data {
         contents.borrow().chars().all(|c| c.is_whitespace())
+    } else {
+        false
+    }
+}
+
+fn is_non_whitespace_text_node(node: &Handle) -> bool {
+    if let NodeData::Text { contents } = &node.data {
+        contents.borrow().chars().any(|c| !c.is_whitespace())
     } else {
         false
     }

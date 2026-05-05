@@ -20,7 +20,7 @@ fn test_mustache_eval() {
         {{ 1 + 1 }}
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         2
@@ -36,7 +36,7 @@ fn test_mustache_multiple() {
         {{ 1 + 1 }} and {{ 2 + 2 }}
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         2 and 4
@@ -55,7 +55,7 @@ fn test_mustache_multiline() {
         }}
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         2
@@ -72,7 +72,7 @@ fn test_mustache_unclosed() {
         {{ unclosed }
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         {{ unclosed }
@@ -89,7 +89,7 @@ fn test_mustache_empty() {
         [{{ }}]
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         []
@@ -108,7 +108,7 @@ fn test_mustache_array() {
         <div>{{ list }}</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <p>Hello, world!</p>
@@ -128,7 +128,7 @@ fn test_mustache_object() {
         <div>{{ user.age }}</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <p>Hello, world!</p>
@@ -150,7 +150,7 @@ fn test_data_alias_mustache() {
         <div>{{ $.user.name }}</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>Alice</div>
@@ -170,7 +170,7 @@ fn test_data_alias_directives() {
         </ul>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <p>Alice</p>
@@ -189,7 +189,7 @@ fn test_data_alias_non_object() {
     let input = r#"
     <div>{{ $ }}</div>
     "#;
-    let output = render(input.to_string(), json!(["a", "b"])).unwrap();
+    let output = render(input, json!(["a", "b"])).unwrap();
 
     let expected = r#"<html><head></head><body><div>[ "a", "b" ]</div>
     </body></html>"#;
@@ -205,7 +205,7 @@ fn test_data_alias_reserved_collision() {
     </div>
     "#;
     let output = render(
-        input.to_string(),
+        input,
         json!({
             "$": "custom",
             "user": {
@@ -234,7 +234,7 @@ fn test_mustache_falsy() {
         <div>{{ "" }}</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>false</div>
@@ -257,7 +257,7 @@ fn test_mustache_statement() {
         {{ let exist = true; exist }}
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         true
@@ -275,7 +275,7 @@ fn test_mustache_error() {
         [{{ foo.bar.baz }}]
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         []
@@ -295,7 +295,7 @@ fn test_mustache_this() {
         {{ this }}
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         
@@ -319,7 +319,7 @@ fn test_mustache_comment() {
         }}
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         3
@@ -336,7 +336,7 @@ fn test_mustache_this_json() {
         {{ JSON.stringify(this) }}
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     assert!(output.contains(r#""__scope_0""#));
     assert!(output.contains(r#""$":{"list":[1,2,3],"user":{"name":"Alice","age":21}}"#));
@@ -350,7 +350,7 @@ fn test_mustache_isolation() {
         <h2>{{ x }}</h2>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <h1>1</h1>

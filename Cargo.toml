@@ -1,6 +1,6 @@
 [package]
 name = "prevue"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["morugetsm <shouu6@gmail.com>"]
@@ -12,7 +12,6 @@ keywords = ["template", "html", "vue"]
 categories = ["template-engine"]
 
 [dependencies]
-anyhow = "1.0"
 boa_ast = "0.21"
 boa_engine = { version = "0.21", features = ["deser"] }
 boa_parser = "0.21"
@@ -21,3 +20,4 @@ markup5ever_rcdom = "0.38.0"
 regex = "1.12"
 serde = "1.0"
 serde_json = { version = "1.0", features = ["preserve_order"] }
+thiserror = "2"

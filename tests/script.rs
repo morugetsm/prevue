@@ -1,4 +1,4 @@
-use prevue::render;
+use prevue::{Directive, DirectiveErrorKind, Error, render};
 use serde_json::json;
 
 #[test]
@@ -12,7 +12,7 @@ fn test_script_function_in_mustache() {
     <div>{{ fullName(user) }}</div>
     "#;
     let output = render(
-        input.to_string(),
+        input,
         json!({
             "user": { "first": "Ada", "last": "Lovelace" },
         }),
@@ -36,7 +36,7 @@ fn test_script_const_arrow_function_in_if() {
     </div>
     "#;
     let output = render(
-        input.to_string(),
+        input,
         json!({
             "user": { "name": "Alice", "age": 21 },
         }),
@@ -63,7 +63,7 @@ fn test_script_helpers_in_for_and_bind() {
     </ul>
     "#;
     let output = render(
-        input.to_string(),
+        input,
         json!({
             "items": [
                 { "name": "one", "visible": true },
@@ -94,7 +94,7 @@ fn test_script_execution_order() {
     </script>
     <p>{{ double(value) }}</p>
     "#;
-    let output = render(input.to_string(), json!({ "value": 3 })).unwrap();
+    let output = render(input, json!({ "value": 3 })).unwrap();
 
     let expected = r#"<html><head>
     </head><body><p>6</p>
@@ -111,7 +111,7 @@ fn test_script_helpers_are_not_available_before_execution() {
     </script>
     <p>{{ helper() }}</p>
     "#;
-    let output = render(input.to_string(), json!({})).unwrap();
+    let output = render(input, json!({})).unwrap();
 
     let expected = r#"<html><head></head><body><p></p>
     <p>ready</p>
@@ -135,7 +135,7 @@ fn test_script_var_and_class_declarations() {
     </script>
     <p>{{ new Greeter(user.name).greet() }}</p>
     "#;
-    let output = render(input.to_string(), json!({ "user": { "name": "Alice" } })).unwrap();
+    let output = render(input, json!({ "user": { "name": "Alice" } })).unwrap();
 
     let expected = r#"<html><head>
     </head><body><p>hi, Alice</p>
@@ -151,7 +151,7 @@ fn test_regular_script_is_preserved_and_not_executed() {
     </script>
     <p>{{ helper() }}</p>
     "#;
-    let output = render(input.to_string(), json!({})).unwrap();
+    let output = render(input, json!({})).unwrap();
 
     let expected = r#"<html><head><script>
         const helper = () => 'client';
@@ -171,7 +171,7 @@ fn test_script_inside_pre_is_preserved_and_not_executed() {
         {{ helper() }}
     </div>
     "#;
-    let output = render(input.to_string(), json!({})).unwrap();
+    let output = render(input, json!({})).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <script type="prevue">
@@ -191,7 +191,7 @@ fn test_script_with_pre_is_preserved_and_not_executed() {
     </script>
     <p>{{ helper() }}</p>
     "#;
-    let output = render(input.to_string(), json!({})).unwrap();
+    let output = render(input, json!({})).unwrap();
 
     let expected = r#"<html><head><script type="prevue">
         const helper = () => 'pre';
@@ -211,7 +211,7 @@ fn test_script_inside_plain_template_is_inert() {
     </template>
     <p>{{ helper() }}</p>
     "#;
-    let output = render(input.to_string(), json!({})).unwrap();
+    let output = render(input, json!({})).unwrap();
 
     let expected = r#"<html><head><template></template>
     </head><body><p></p>
@@ -227,7 +227,7 @@ fn test_script_if_false_does_not_execute() {
     </script>
     <p>{{ helper() }}</p>
     "#;
-    let output = render(input.to_string(), json!({})).unwrap();
+    let output = render(input, json!({})).unwrap();
 
     let expected = r#"<html><head>
     </head><body><p></p>
@@ -243,7 +243,7 @@ fn test_script_if_true_executes_and_is_removed() {
     </script>
     <p>{{ helper() }}</p>
     "#;
-    let output = render(input.to_string(), json!({})).unwrap();
+    let output = render(input, json!({})).unwrap();
 
     let expected = r#"<html><head>
     </head><body><p>ready</p>
@@ -262,7 +262,7 @@ fn test_script_for_executes_in_iteration_scope() {
     </script>
     <p>{{ seen.join(',') }}</p>
     "#;
-    let output = render(input.to_string(), json!({ "list": ["a", "b", "c"] })).unwrap();
+    let output = render(input, json!({ "list": ["a", "b", "c"] })).unwrap();
 
     let expected = r#"<html><head>
     </head><body><p>a,b,c</p>
@@ -280,7 +280,7 @@ fn test_script_inside_structural_template_executes_when_reached() {
     </template>
     <p>{{ helper() }}</p>
     "#;
-    let output = render(input.to_string(), json!({ "ready": true })).unwrap();
+    let output = render(input, json!({ "ready": true })).unwrap();
 
     let expected = r#"<html><head>
     </head><body><p>template</p>
@@ -298,7 +298,7 @@ fn test_script_inside_skipped_structural_template_does_not_execute() {
     </template>
     <p>{{ helper() }}</p>
     "#;
-    let output = render(input.to_string(), json!({ "ready": false })).unwrap();
+    let output = render(input, json!({ "ready": false })).unwrap();
 
     let expected = r#"<html><head>
     </head><body><p></p>
@@ -314,7 +314,7 @@ fn test_script_can_access_data_alias() {
     </script>
     <p>{{ first() }}</p>
     "#;
-    let output = render(input.to_string(), json!({ "items": ["a", "b"] })).unwrap();
+    let output = render(input, json!({ "items": ["a", "b"] })).unwrap();
 
     let expected = r#"<html><head>
     </head><body><p>a</p>
@@ -330,7 +330,8 @@ fn test_script_syntax_error_returns_error() {
     </script>
     "#;
 
-    assert!(render(input.to_string(), json!({})).is_err());
+    let err = render(input, json!({})).unwrap_err();
+    assert!(matches!(err, Error::SetupScript { .. }));
 }
 
 #[test]
@@ -341,5 +342,26 @@ fn test_script_runtime_error_returns_error() {
     </script>
     "#;
 
-    assert!(render(input.to_string(), json!({})).is_err());
+    let err = render(input, json!({})).unwrap_err();
+    assert!(matches!(err, Error::SetupScript { .. }));
+}
+
+#[test]
+fn test_script_orphan_else_errors_before_execution() {
+    let input = r#"
+    <script type="prevue" v-else>
+        const helper = () => 'should not run';
+    </script>
+    <p>{{ helper() }}</p>
+    "#;
+
+    let err = render(input, json!({})).unwrap_err();
+    assert!(matches!(
+        err,
+        Error::InvalidDirective {
+            directive: Directive::Else,
+            kind: DirectiveErrorKind::MissingAdjacentConditional,
+            expression: None
+        }
+    ));
 }

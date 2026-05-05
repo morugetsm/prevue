@@ -16,7 +16,7 @@ cargo add prevue
 ## API
 
 ```rust
-pub fn render(template: impl AsRef<str>, data: impl Serialize) -> Result<String, anyhow::Error>
+pub fn render(template: impl AsRef<str>, data: impl Serialize) -> prevue::Result<String>
 ```
 
 

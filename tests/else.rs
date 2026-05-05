@@ -1,4 +1,4 @@
-use prevue::render;
+use prevue::{Directive, DirectiveErrorKind, Error, render};
 use serde_json::{Value, json};
 
 fn data() -> Value {
@@ -21,7 +21,7 @@ fn test_else_basic() {
         <div v-else>ELSE2</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>IF1</div>
@@ -53,7 +53,7 @@ fn test_else_if_basic() {
         <div v-else>ELSE4</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>IF1</div>
@@ -84,7 +84,7 @@ fn test_else_if_expressions() {
         <div v-else>Failed</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <div>B</div>
@@ -127,7 +127,7 @@ fn test_else_if_chain_evaluations() {
         <div v-else>ELSE</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <!-- first else-if hits -->
@@ -171,7 +171,7 @@ fn test_multiple_chains_adjacent() {
         <div v-else>ELSE4</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <!-- Chain 1 -->
@@ -194,32 +194,37 @@ fn test_multiple_chains_adjacent() {
 
 #[test]
 fn test_standalone_else_and_else_if() {
-    // v-else and v-else-if without preceding v-if: should render normally without errors
-    let input = r#"
+    let else_input = r#"
     <div>
         <div>Normal</div>
         <div v-else>ELSE</div>
+    </div>
+    "#;
+    let err = render(else_input, data()).unwrap_err();
+    assert!(matches!(
+        err,
+        Error::InvalidDirective {
+            directive: Directive::Else,
+            kind: DirectiveErrorKind::MissingAdjacentConditional,
+            expression: None
+        }
+    ));
 
+    let else_if_input = r#"
+    <div>
         <div>Normal</div>
         <div v-else-if="false">ELSE-IF</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        <div>Normal</div>
-        <div>ELSE</div>
-
-        <div>Normal</div>
-        <div>ELSE-IF</div>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    let err = render(else_if_input, data()).unwrap_err();
+    assert!(
+        matches!(err, Error::InvalidDirective { directive: Directive::ElseIf, kind: DirectiveErrorKind::MissingAdjacentConditional, expression: Some(expr) }
+            if expr == "false")
+    );
 }
 
 #[test]
 fn test_else_if_after_else() {
-    // v-else breaks the chain, so a subsequent v-else-if is treated as a standalone (not hitting any chain state)
     let input = r#"
     <div>
         <div v-if="false">IF</div>
@@ -227,11 +232,121 @@ fn test_else_if_after_else() {
         <div v-else-if="true">ELSE-IF</div>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let err = render(input, data()).unwrap_err();
+    assert!(
+        matches!(err, Error::InvalidDirective { directive: Directive::ElseIf, kind: DirectiveErrorKind::MissingAdjacentConditional, expression: Some(expr) }
+            if expr == "true")
+    );
+}
+
+#[test]
+fn test_else_chain_allows_whitespace_and_comments() {
+    let input = r#"
+    <div>
+        <div v-if="false">IF</div>
+        <!-- comment keeps the chain adjacent -->
+        <div v-else>ELSE</div>
+    </div>
+    "#;
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
+        <!-- comment keeps the chain adjacent -->
         <div>ELSE</div>
-        <div>ELSE-IF</div>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_else_chain_rejects_non_whitespace_text_between_branches() {
+    let input = r#"
+    <div>
+        <div v-if="false">IF</div>
+        text
+        <div v-else>ELSE</div>
+    </div>
+    "#;
+    let err = render(input, data()).unwrap_err();
+    assert!(matches!(
+        err,
+        Error::InvalidDirective {
+            directive: Directive::Else,
+            kind: DirectiveErrorKind::MissingAdjacentConditional,
+            expression: None
+        }
+    ));
+}
+
+#[test]
+fn test_else_inside_pre_is_preserved() {
+    let input = r#"
+    <div v-pre>
+        <p v-else>ELSE</p>
+        <p v-else-if="ok">ELSE-IF</p>
+    </div>
+    "#;
+    let output = render(input, data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <p v-else="">ELSE</p>
+        <p v-else-if="ok">ELSE-IF</p>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_else_inside_skipped_structural_branch_is_not_validated() {
+    let input = r#"
+    <div>
+        <template v-if="false">
+            <p v-else>ELSE</p>
+        </template>
+    </div>
+    "#;
+    let output = render(input, data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_else_inside_rendered_structural_branch_is_validated() {
+    let input = r#"
+    <div>
+        <template v-if="true">
+            <p v-else>ELSE</p>
+        </template>
+    </div>
+    "#;
+    let err = render(input, data()).unwrap_err();
+    assert!(matches!(
+        err,
+        Error::InvalidDirective {
+            directive: Directive::Else,
+            kind: DirectiveErrorKind::MissingAdjacentConditional,
+            expression: None
+        }
+    ));
+}
+
+#[test]
+fn test_else_chain_inside_rendered_structural_branch() {
+    let input = r#"
+    <div>
+        <template v-if="true">
+            <p v-if="false">IF</p>
+            <p v-else>ELSE</p>
+        </template>
+    </div>
+    "#;
+    let output = render(input, data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <p>ELSE</p>
     </div>
     </body></html>"#;
     assert_eq!(output, expected);

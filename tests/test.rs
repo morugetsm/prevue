@@ -21,8 +21,7 @@ fn test_example() {
             <li v-for="item in list">{{ item }}</li>
         </ul>
     </div>
-    "#
-    .to_string();
+    "#;
 
     let data = json!({
         "id": "link-id",
@@ -55,8 +54,7 @@ fn test_example_with_less_indent() {
       <li v-for="item in list">{{ item }}</li>
     </ul>
   </div>
-    "#
-    .to_string();
+    "#;
 
     let data = json!({
         "id": "link-id",
@@ -82,7 +80,7 @@ fn test_example_with_less_indent() {
 #[test]
 fn test_html5ever() {
     let input = "";
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = "<html><head></head><body></body></html>";
     assert_eq!(output, expected);
@@ -95,7 +93,7 @@ fn test_attr_case() {
         <h1 TTT></h1>
     </div>
     "#;
-    let output = render(input.to_string(), data()).unwrap();
+    let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
         <h1 ttt=""></h1>
