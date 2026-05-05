@@ -116,7 +116,6 @@ prevue uses [Boa](https://github.com/boa-dev/boa) to evaluate JavaScript express
 
 - Never use untrusted templates.
 - Accessing undeclared identifiers fails expression evaluation instead of returning `undefined`.
-- `render` returns `prevue::Result<String>`, so parser, data, setup script, and structural directive errors can be handled explicitly.
 - `this` is not Vue-compatible and may expose internal scope objects. Avoid using `this` in templates.
 
 
