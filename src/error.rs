@@ -6,6 +6,8 @@ pub enum Directive {
     ElseIf,
     Else,
     For,
+    Text,
+    Html,
 }
 
 impl fmt::Display for Directive {
@@ -15,6 +17,8 @@ impl fmt::Display for Directive {
             Self::ElseIf => f.write_str("v-else-if"),
             Self::Else => f.write_str("v-else"),
             Self::For => f.write_str("v-for"),
+            Self::Text => f.write_str("v-text"),
+            Self::Html => f.write_str("v-html"),
         }
     }
 }
@@ -89,7 +93,7 @@ pub enum Error {
         expression: Option<String>,
     },
 
-    #[error("conflicting conditional directives: {directives:?}")]
+    #[error("conflicting directives: {directives:?}")]
     ConflictingDirectives { directives: Vec<Directive> },
 }
 

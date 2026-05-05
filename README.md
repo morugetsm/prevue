@@ -69,8 +69,8 @@ fn main() -> prevue::Result<()> {
 | `v-else`, `v-else-if` | ✅ | Conditional branches |
 | `v-for` | ✅ | List rendering |
 | `v-text` | ✅ | Text replacement |
+| `v-html` | ✅ | Raw HTML replacement; inserted HTML is not compiled |
 | `v-pre` | ✅ | Skip rendering logic |
-| `v-html` | ❌ | Not supported |
 
 
 ## Behavior Notes

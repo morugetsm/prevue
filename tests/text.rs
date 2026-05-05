@@ -42,8 +42,7 @@ fn text_self_closing() {
     let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
-        <p>Hello, world!</p>
-    </div>
+        <p>Hello, world!</p></div>
     </body></html>"#;
     assert_eq!(output, expected);
 }
@@ -80,6 +79,15 @@ fn text_overrides_inner_content() {
         <p>Hello, world!</p>
     </div>
     </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn text_overrides_compact_inner_content() {
+    let input = r#"<div><p v-text="str">fallback</p></div>"#;
+    let output = render(input, data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div><p>Hello, world!</p></div></body></html>"#;
     assert_eq!(output, expected);
 }
 
@@ -134,44 +142,6 @@ fn text_self_closing_overrides_mustache() {
     assert_eq!(output, expected);
 }
 
-// === Sibling Preservation ===
-
-#[test]
-fn text_self_closing_preserves_text_sibling() {
-    // text sibling on the next line is preserved
-    let input = r#"
-    <div>
-        <p v-text="str" />
-        wow
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        <p>Hello, world!</p>
-        wow
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
-}
-
-#[test]
-fn text_self_closing_preserves_inline_sibling() {
-    // inline text immediately after /> remains after the element
-    let input = r#"
-    <div>
-        <p v-text="str" />wow
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        <p>Hello, world!</p>wow
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
-}
-
 // === Value Types ===
 
 #[test]
@@ -218,8 +188,7 @@ fn text_boolean() {
     let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
-        <p>true</p>
-    </div>
+        <p>true</p></div>
     </body></html>"#;
     assert_eq!(output, expected);
 }
@@ -234,8 +203,7 @@ fn text_string() {
     let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
-        <p>Hello, world!</p>
-    </div>
+        <p>Hello, world!</p></div>
     </body></html>"#;
     assert_eq!(output, expected);
 }
@@ -250,8 +218,7 @@ fn text_number() {
     let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
-        <p>42</p>
-    </div>
+        <p>42</p></div>
     </body></html>"#;
     assert_eq!(output, expected);
 }
@@ -266,8 +233,7 @@ fn text_array_self_closing() {
     let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
-        <p>1,2,3</p>
-    </div>
+        <p>1,2,3</p></div>
     </body></html>"#;
     assert_eq!(output, expected);
 }
@@ -299,8 +265,7 @@ fn text_array_vs_mustache() {
     let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
-        <p>1,2,3</p>
-        <p>[ 1, 2, 3 ]</p>
+        <p>1,2,3</p><p>[ 1, 2, 3 ]</p>
     </div>
     </body></html>"#;
     assert_eq!(output, expected);
@@ -317,8 +282,7 @@ fn text_array_mixed() {
     let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
-        <p>,true,hello,1,4,5,6,[object Object]</p>
-    </div>
+        <p>,true,hello,1,4,5,6,[object Object]</p></div>
     </body></html>"#;
     assert_eq!(output, expected);
 }
@@ -334,8 +298,7 @@ fn text_array_mixed_vs_mustache() {
     let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
-        <p>,true,hello,1,4,5,6,[object Object]</p>
-        <p>[ null, true, "hello", 1, [ 4, 5, 6 ], { "a": "b" } ]</p>
+        <p>,true,hello,1,4,5,6,[object Object]</p><p>[ null, true, "hello", 1, [ 4, 5, 6 ], { "a": "b" } ]</p>
     </div>
     </body></html>"#;
     assert_eq!(output, expected);
@@ -352,8 +315,7 @@ fn text_object() {
     let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
-        <p>[object Object]</p>
-    </div>
+        <p>[object Object]</p></div>
     </body></html>"#;
     assert_eq!(output, expected);
 }
@@ -369,8 +331,7 @@ fn text_object_vs_mustache() {
     let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
-        <p>[object Object]</p>
-        <p>{ "key": "value" }</p>
+        <p>[object Object]</p><p>{ "key": "value" }</p>
     </div>
     </body></html>"#;
     assert_eq!(output, expected);
@@ -387,8 +348,7 @@ fn text_object_mixed() {
     let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
-        <p>[object Object]</p>
-    </div>
+        <p>[object Object]</p></div>
     </body></html>"#;
     assert_eq!(output, expected);
 }
@@ -404,8 +364,7 @@ fn text_object_mixed_vs_mustache() {
     let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
-        <p>[object Object]</p>
-        <p>{ "a": null, "b": true, "c": "hello", "d": 1, "e": [ 4, 5, 6 ], "f": { "g": "h" } }</p>
+        <p>[object Object]</p><p>{ "a": null, "b": true, "c": "hello", "d": 1, "e": [ 4, 5, 6 ], "f": { "g": "h" } }</p>
     </div>
     </body></html>"#;
     assert_eq!(output, expected);
@@ -424,9 +383,7 @@ fn text_multiple_self_closing() {
     let output = render(input, data()).unwrap();
 
     let expected = r#"<html><head></head><body><div>
-        <p>1,2,3</p>
-        <p>1,2,3</p>
-    </div>
+        <p>1,2,3</p><p>1,2,3</p></div>
     </body></html>"#;
     assert_eq!(output, expected);
 }

@@ -9,7 +9,7 @@ use boa_engine::{JsValue, JsVariant, property::PropertyKey};
 use html5ever::{
     QualName,
     driver::ParseOpts,
-    parse_document, serialize,
+    parse_document, parse_fragment, serialize,
     tendril::{StrTendril, TendrilSink},
 };
 use markup5ever_rcdom::{Handle, Node, NodeData, RcDom, SerializableHandle};
@@ -24,6 +24,12 @@ pub use error::{Directive, DirectiveErrorKind, Error, Result};
 
 static MUSTACHE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?s)\{\{\s*(.+?)\s*\}\}").unwrap());
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ContentAction {
+    TraverseChildren,
+    SkipChildren,
+}
 
 /// Render template with data
 ///
@@ -101,7 +107,9 @@ fn traverse(handle: &Handle, engine: &mut Engine) -> Result<bool> {
         return Ok(false);
     }
 
-    process_node_content(handle, engine);
+    if process_node_content(handle, engine)? == ContentAction::SkipChildren {
+        return Ok(true);
+    }
 
     let children: Vec<Handle> = children_for_traversal(handle);
 
@@ -138,10 +146,33 @@ fn traverse(handle: &Handle, engine: &mut Engine) -> Result<bool> {
     Ok(true)
 }
 
-// Process node content: v-bind, v-text, and mustache
-fn process_node_content(handle: &Handle, engine: &mut Engine) {
+// Process node content: v-bind, v-text, v-html, and mustache.
+fn process_node_content(handle: &Handle, engine: &mut Engine) -> Result<ContentAction> {
     match &handle.data {
-        NodeData::Element { attrs, .. } => {
+        NodeData::Element { name, attrs, .. } => {
+            let content_directives = {
+                let attrs_ref = attrs.borrow();
+                [
+                    (
+                        attrs_ref.iter().any(|a| a.name.local.as_ref() == "v-text"),
+                        Directive::Text,
+                    ),
+                    (
+                        attrs_ref.iter().any(|a| a.name.local.as_ref() == "v-html"),
+                        Directive::Html,
+                    ),
+                ]
+                .into_iter()
+                .filter_map(|(has_directive, directive)| has_directive.then_some(directive))
+                .collect::<Vec<_>>()
+            };
+            if content_directives.len() > 1 {
+                return Err(Error::ConflictingDirectives {
+                    directives: content_directives,
+                });
+            }
+
+            let mut action = ContentAction::TraverseChildren;
             let mut renames: Vec<(usize, String, String)> = Vec::new();
             let mut removals: Vec<usize> = Vec::new();
             let mut additions: Vec<(String, QualName, String)> = Vec::new();
@@ -151,52 +182,17 @@ fn process_node_content(handle: &Handle, engine: &mut Engine) {
 
                 if name_ref == "v-text" {
                     if let Some(value) = engine.eval_str(attr.value.as_ref()) {
-                        let has_following_text_sibling = {
-                            if let Some(parent_weak) = handle.parent.take() {
-                                handle.parent.set(Some(Weak::clone(&parent_weak)));
-                                parent_weak.upgrade().is_some_and(|parent| {
-                                    let children = parent.children.borrow();
-                                    children
-                                        .iter()
-                                        .position(|c| Rc::ptr_eq(c, handle))
-                                        .and_then(|pos| children.get(pos + 1))
-                                        .is_some_and(|next| {
-                                            matches!(&next.data, NodeData::Text { .. })
-                                        })
-                                })
-                            } else {
-                                false
-                            }
-                        };
+                        replace_element_children(handle, vec![create_text_node(&value)]);
+                        action = ContentAction::SkipChildren;
+                    }
+                    removals.push(i);
+                    continue;
+                }
 
-                        let children_to_move: Vec<Handle> = if has_following_text_sibling {
-                            Vec::new()
-                        } else {
-                            handle.children.borrow().iter().cloned().collect()
-                        };
-
-                        let mut children = handle.children.borrow_mut();
-                        *children = vec![Node::new(NodeData::Text {
-                            contents: RefCell::new(StrTendril::from_str(&value).unwrap()),
-                        })];
-                        drop(children);
-
-                        if !children_to_move.is_empty()
-                            && let Some(parent_weak) = handle.parent.take()
-                        {
-                            handle.parent.set(Some(Weak::clone(&parent_weak)));
-                            if let Some(parent) = parent_weak.upgrade() {
-                                let mut parent_children = parent.children.borrow_mut();
-                                if let Some(pos) =
-                                    parent_children.iter().position(|c| Rc::ptr_eq(c, handle))
-                                {
-                                    for (i, node) in children_to_move.iter().enumerate() {
-                                        node.parent.set(Some(Weak::clone(&parent_weak)));
-                                        parent_children.insert(pos + 1 + i, Rc::clone(node));
-                                    }
-                                }
-                            }
-                        }
+                if name_ref == "v-html" {
+                    if let Some(value) = engine.eval_str(attr.value.as_ref()) {
+                        replace_element_children(handle, parse_html_fragment(name, &value));
+                        action = ContentAction::SkipChildren;
                     }
                     removals.push(i);
                     continue;
@@ -304,6 +300,7 @@ fn process_node_content(handle: &Handle, engine: &mut Engine) {
                     });
                 }
             }
+            Ok(action)
         }
         NodeData::Text { contents } => {
             let mut content = contents.borrow_mut();
@@ -323,9 +320,64 @@ fn process_node_content(handle: &Handle, engine: &mut Engine) {
                 }
                 *content = StrTendril::from_str(&text_value).unwrap();
             }
+            Ok(ContentAction::TraverseChildren)
         }
-        _ => (),
+        _ => Ok(ContentAction::TraverseChildren),
     }
+}
+
+fn parse_html_fragment(context_name: &QualName, html: &str) -> Vec<Handle> {
+    let dom = parse_fragment(
+        RcDom::default(),
+        ParseOpts::default(),
+        context_name.clone(),
+        Vec::new(),
+        false,
+    )
+    .one(html);
+
+    let root_nodes = dom
+        .document
+        .children
+        .borrow()
+        .iter()
+        .cloned()
+        .collect::<Vec<_>>();
+    let nodes = match root_nodes.as_slice() {
+        [root]
+            if matches!(
+                &root.data,
+                NodeData::Element { name, .. } if name.local.as_ref() == "html"
+            ) =>
+        {
+            root.children.borrow().iter().cloned().collect::<Vec<_>>()
+        }
+        _ => root_nodes,
+    };
+
+    // Clone fragment nodes before attaching them to the main document. Moving
+    // RcDom fragment handles directly can leave their subtree tied to the
+    // temporary parser document.
+    nodes
+        .iter()
+        .map(|node| {
+            let cloned = clone_node(node);
+            cloned.parent.take();
+            cloned
+        })
+        .collect()
+}
+
+fn replace_element_children(handle: &Handle, new_children: Vec<Handle>) {
+    for child in handle.children.borrow().iter() {
+        child.parent.take();
+    }
+
+    for child in new_children.iter() {
+        child.parent.set(Some(Rc::downgrade(handle)));
+    }
+
+    *handle.children.borrow_mut() = new_children;
 }
 
 fn eval_json(engine: &mut Engine, code: &str) -> Option<JsonValue> {
