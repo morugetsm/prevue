@@ -17,7 +17,7 @@ fn data() -> Value {
 // === Basic Behavior ===
 
 #[test]
-fn test_template_basic() {
+fn template_basic() {
     let input = r#"
     <div>
         <template>Hello</template>
@@ -35,7 +35,7 @@ fn test_template_basic() {
 // === v-if ===
 
 #[test]
-fn test_template_if() {
+fn template_if() {
     let input = r#"
     <div>
         <template v-if="true">Hello</template>
@@ -51,7 +51,7 @@ fn test_template_if() {
 }
 
 #[test]
-fn test_template_if_chain() {
+fn template_if_chain() {
     let input = r#"
     <div>
         <template v-if="false">A</template>
@@ -71,7 +71,7 @@ fn test_template_if_chain() {
 // === v-for ===
 
 #[test]
-fn test_template_for() {
+fn template_for() {
     let input = r#"
     <div>
         <template v-for="item in list">{{ item }}</template>
@@ -89,7 +89,7 @@ fn test_template_for() {
 }
 
 #[test]
-fn test_template_for_destructuring() {
+fn template_for_destructuring() {
     let input = r#"
     <div>
         <template v-for="{ foo } in list">{{ foo }}</template>
@@ -112,7 +112,7 @@ fn test_template_for_destructuring() {
 }
 
 #[test]
-fn test_template_for_empty() {
+fn template_for_empty() {
     let input = r#"
     <div>
         <template v-for="item in list"></template>
@@ -127,7 +127,7 @@ fn test_template_for_empty() {
 }
 
 #[test]
-fn test_template_for_element() {
+fn template_for_element() {
     let input = r#"
     <div>
         <template v-for="item in list">
@@ -147,7 +147,7 @@ fn test_template_for_element() {
 }
 
 #[test]
-fn test_template_for_element_linebreak() {
+fn template_for_element_linebreak() {
     let input = r#"
     <div>
         <template v-for="item in list">
@@ -175,7 +175,7 @@ fn test_template_for_element_linebreak() {
 }
 
 #[test]
-fn test_template_for_element_linebreak_with_less_indent() {
+fn template_for_element_linebreak_with_less_indent() {
     let input = r#"
   <div>
     <template v-for="item in list">
@@ -203,7 +203,7 @@ fn test_template_for_element_linebreak_with_less_indent() {
 }
 
 #[test]
-fn test_template_for_complex() {
+fn template_for_complex() {
     let input = r#"
     <div>
         <template v-for="item, index in complex">
@@ -229,7 +229,7 @@ fn test_template_for_complex() {
 }
 
 #[test]
-fn test_template_for_object_with_key_index() {
+fn template_for_object_with_key_index() {
     let input = r#"
     <div>
         <template v-for="val, key, idx in { a: 1, b: 2 }">
@@ -248,7 +248,7 @@ fn test_template_for_object_with_key_index() {
 }
 
 #[test]
-fn test_template_for_with_inner_if() {
+fn template_for_with_inner_if() {
     let input = r#"
     <div>
         <template v-for="n in [1, 2, 3]">
@@ -269,7 +269,7 @@ fn test_template_for_with_inner_if() {
 }
 
 #[test]
-fn test_template_for_trims_whitespace_children() {
+fn template_for_trims_whitespace_children() {
     let input = r#"
     <div>
         <template v-for="i in [1,2]">
@@ -294,7 +294,7 @@ fn test_template_for_trims_whitespace_children() {
 // === v-pre ===
 
 #[test]
-fn test_template_pre() {
+fn template_pre() {
     let input = r#"
     <div>
         <template v-pre>
@@ -312,7 +312,7 @@ fn test_template_pre() {
 }
 
 #[test]
-fn test_template_pre_inner() {
+fn template_pre_inner() {
     let input = r#"
     <div>
         <div v-pre>
@@ -332,7 +332,7 @@ fn test_template_pre_inner() {
 }
 
 #[test]
-fn test_template_pre_with_if() {
+fn template_pre_with_if() {
     let input = r#"
     <div>
         <template v-pre v-if="false">Hello</template>
@@ -350,7 +350,7 @@ fn test_template_pre_with_if() {
 // === Attributes ===
 
 #[test]
-fn test_template_no_directive_with_attrs() {
+fn template_no_directive_with_attrs() {
     let input = r#"
     <div>
         <template data-x="y">IGNORED</template>

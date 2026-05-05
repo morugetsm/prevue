@@ -13,7 +13,7 @@ impl Serialize for BrokenData {
 }
 
 #[test]
-fn test_data_serialization_error_returns_error() {
+fn data_serialization_error_returns_error() {
     let err = render("<p>{{ message }}</p>", BrokenData).unwrap_err();
     assert!(matches!(err, Error::DataSerialize { .. }));
 }

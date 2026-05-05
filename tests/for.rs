@@ -14,7 +14,7 @@ fn data() -> Value {
 // === Array ===
 
 #[test]
-fn test_for_array() {
+fn for_array() {
     let input = r#"
     <div>
         <h1>{{ notclosed }</h1>
@@ -38,7 +38,7 @@ fn test_for_array() {
 }
 
 #[test]
-fn test_for_array_of() {
+fn for_array_of() {
     let input = r#"
     <div>
         <div v-for="item of list">{{ item }}</div>
@@ -56,7 +56,7 @@ fn test_for_array_of() {
 }
 
 #[test]
-fn test_for_array_literal() {
+fn for_array_literal() {
     let input = r#"
     <div>
         <div v-for="item, index in [10, 20, 30]">{{ `${index}: ${item}` }}</div>
@@ -74,7 +74,7 @@ fn test_for_array_literal() {
 }
 
 #[test]
-fn test_for_array_excess_arguments() {
+fn for_array_excess_arguments() {
     // Array iteration supports at most `item, index`. Third argument resolves to empty/undefined.
     let input = r#"
     <div>
@@ -109,7 +109,7 @@ fn test_for_array_excess_arguments() {
 }
 
 #[test]
-fn test_for_object_destructuring_alias() {
+fn for_object_destructuring_alias() {
     let input = r#"
     <div>
         <p v-for="{ foo, bar } in items">{{ `${foo}:${bar}` }}</p>
@@ -132,7 +132,7 @@ fn test_for_object_destructuring_alias() {
 }
 
 #[test]
-fn test_for_object_destructuring_nested_default_rest() {
+fn for_object_destructuring_nested_default_rest() {
     let input = r#"
     <div>
         <p v-for="{ foo: label, nested: { count = 0 }, ...rest } in items">
@@ -161,7 +161,7 @@ fn test_for_object_destructuring_nested_default_rest() {
 }
 
 #[test]
-fn test_for_array_destructuring_alias() {
+fn for_array_destructuring_alias() {
     let input = r#"
     <div>
         <p v-for="[first, second, ...rest] in rows">{{ `${first}:${second}:${rest.length}` }}</p>
@@ -184,7 +184,7 @@ fn test_for_array_destructuring_alias() {
 }
 
 #[test]
-fn test_for_destructuring_with_index() {
+fn for_destructuring_with_index() {
     let input = r#"
     <div>
         <p v-for="{ name }, index in users">{{ `${index}:${name}` }}</p>
@@ -207,7 +207,7 @@ fn test_for_destructuring_with_index() {
 }
 
 #[test]
-fn test_for_nested() {
+fn for_nested() {
     let input = r#"
     <div>
         <div v-for="item in list">
@@ -249,7 +249,7 @@ fn test_for_nested() {
 // === Object ===
 
 #[test]
-fn test_for_object() {
+fn for_object() {
     let input = r#"
     <div>
         <h1 v-for="value, key in user">{{ `${key}: ${value}` }}</h1>
@@ -266,7 +266,7 @@ fn test_for_object() {
 }
 
 #[test]
-fn test_for_object_three_arguments() {
+fn for_object_three_arguments() {
     // Object iteration supports up to 3 arguments: `value, key, index`
     let input = r#"
     <div>
@@ -296,7 +296,7 @@ fn test_for_object_three_arguments() {
 }
 
 #[test]
-fn test_for_object_destructuring_key_index() {
+fn for_object_destructuring_key_index() {
     let input = r#"
     <div>
         <p v-for="{ age }, key, index in users">{{ `${key}:${index}:${age}` }}</p>
@@ -321,7 +321,7 @@ fn test_for_object_destructuring_key_index() {
 // === Number ===
 
 #[test]
-fn test_for_number_literal() {
+fn for_number_literal() {
     let input = r#"
     <div>
         <div v-for="item in 5">{{ item }}</div>
@@ -341,7 +341,7 @@ fn test_for_number_literal() {
 }
 
 #[test]
-fn test_for_number_variable() {
+fn for_number_variable() {
     let input = r#"
     <div>
         <div v-for="item in user.age">{{ item }}</div>
@@ -377,7 +377,7 @@ fn test_for_number_variable() {
 }
 
 #[test]
-fn test_for_number_with_index() {
+fn for_number_with_index() {
     let input = r#"
     <div>
         <div v-for="item, index in 3">{{ `${index}: ${item}` }}</div>
@@ -395,7 +395,7 @@ fn test_for_number_with_index() {
 }
 
 #[test]
-fn test_for_number_zero() {
+fn for_number_zero() {
     let input = r#"
     <div>
         <div v-for="item in 0">{{ item }}</div>
@@ -412,7 +412,7 @@ fn test_for_number_zero() {
 // === String ===
 
 #[test]
-fn test_for_string_literal() {
+fn for_string_literal() {
     let input = r#"
     <div>
         <div v-for="char in 'abc'">{{ char }}</div>
@@ -430,7 +430,7 @@ fn test_for_string_literal() {
 }
 
 #[test]
-fn test_for_string_variable() {
+fn for_string_variable() {
     let input = r#"
     <div>
         <div v-for="char in user.name">{{ char }}</div>
@@ -450,7 +450,7 @@ fn test_for_string_variable() {
 }
 
 #[test]
-fn test_for_string_with_index() {
+fn for_string_with_index() {
     let input = r#"
     <div>
         <div v-for="char, index in 'xyz'">{{ `${index}: ${char}` }}</div>
@@ -468,7 +468,7 @@ fn test_for_string_with_index() {
 }
 
 #[test]
-fn test_for_string_empty() {
+fn for_string_empty() {
     let input = r#"
     <div>
         <div v-for="char in ''">{{ char }}</div>
@@ -485,7 +485,7 @@ fn test_for_string_empty() {
 // === Expressions & Special Types ===
 
 #[test]
-fn test_for_function_call() {
+fn for_function_call() {
     let input = r#"
     <div>
         <div v-for="key in Object.keys(user)">{{ key }}</div>
@@ -502,7 +502,7 @@ fn test_for_function_call() {
 }
 
 #[test]
-fn test_for_method_chaining() {
+fn for_method_chaining() {
     let input = r#"
     <div>
         <div v-for="item in list.filter(x => x > 1).map(x => x * 2)">{{ item }}</div>
@@ -519,7 +519,7 @@ fn test_for_method_chaining() {
 }
 
 #[test]
-fn test_for_expression() {
+fn for_expression() {
     let input = r#"
     <div>
         <div v-for="n in Array(3).fill(0).map((_, i) => i + 1)">{{ n }}</div>
@@ -537,7 +537,7 @@ fn test_for_expression() {
 }
 
 #[test]
-fn test_for_special_char_variables() {
+fn for_special_char_variables() {
     // Valid JS identifier characters like $ and _ can be used
     let input = r#"
     <div>
@@ -558,7 +558,7 @@ fn test_for_special_char_variables() {
 // === Edge Cases & Whitespace ===
 
 #[test]
-fn test_for_with_comment() {
+fn for_with_comment() {
     let input = r#"
     <div>
         <!-- comment --><div v-for="item in list">a{{ item }}</div>
@@ -578,7 +578,7 @@ fn test_for_with_comment() {
 }
 
 #[test]
-fn test_for_with_leading_empty_line() {
+fn for_with_leading_empty_line() {
     let input = r#"
     <div>
         
@@ -598,7 +598,7 @@ fn test_for_with_leading_empty_line() {
 }
 
 #[test]
-fn test_for_with_trailing_empty_line() {
+fn for_with_trailing_empty_line() {
     let input = r#"
     <div>
         <div v-for="item in list">{{ item }}</div>
@@ -618,7 +618,7 @@ fn test_for_with_trailing_empty_line() {
 }
 
 #[test]
-fn test_for_empty() {
+fn for_empty() {
     let input = r#"
     <div>
         <div v-for="item in []">{{ item }}</div>
@@ -633,7 +633,7 @@ fn test_for_empty() {
 }
 
 #[test]
-fn test_for_with_leading_whitespace() {
+fn for_with_leading_whitespace() {
     let input = r#"
     <div> hi
         <div v-for="item in list">{{ item }}</div>
@@ -651,7 +651,7 @@ fn test_for_with_leading_whitespace() {
 }
 
 #[test]
-fn test_for_with_leading_polluted() {
+fn for_with_leading_polluted() {
     let input = r#"
     <div> hi
     hi  <div v-for="item in list">{{ item }}</div>
@@ -671,7 +671,7 @@ fn test_for_with_leading_polluted() {
 // === Syntax Errors ===
 
 #[test]
-fn test_for_syntax_error() {
+fn for_syntax_error() {
     let input = r#"
     <div>
         <div v-for="Hello, world!">Hello, world!</div>
@@ -685,7 +685,7 @@ fn test_for_syntax_error() {
 }
 
 #[test]
-fn test_for_destructuring_syntax_error() {
+fn for_destructuring_syntax_error() {
     let input = r#"
     <div>
         <div v-for="{ foo: } in list">Hello, world!</div>
@@ -699,7 +699,7 @@ fn test_for_destructuring_syntax_error() {
 }
 
 #[test]
-fn test_for_missing_iterable_is_empty() {
+fn for_missing_iterable_is_empty() {
     let input = r#"
     <div>
         <div v-for="item in missing">{{ item }}</div>

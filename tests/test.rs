@@ -12,7 +12,7 @@ fn data() -> Value {
 }
 
 #[test]
-fn test_example() {
+fn example() {
     let html = r#"
     <div>
         <a :id="id">link</a>
@@ -45,7 +45,7 @@ fn test_example() {
 }
 
 #[test]
-fn test_example_with_less_indent() {
+fn example_with_less_indent() {
     let html = r#"
   <div>
     <a :id="id">link</a>
@@ -78,7 +78,7 @@ fn test_example_with_less_indent() {
 }
 
 #[test]
-fn test_html5ever() {
+fn html5ever() {
     let input = "";
     let output = render(input, data()).unwrap();
 
@@ -87,7 +87,7 @@ fn test_html5ever() {
 }
 
 #[test]
-fn test_attr_case() {
+fn attr_case() {
     let input = r#"
     <div>
         <h1 TTT></h1>

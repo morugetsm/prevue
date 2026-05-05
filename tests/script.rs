@@ -2,7 +2,7 @@ use prevue::{Directive, DirectiveErrorKind, Error, render};
 use serde_json::json;
 
 #[test]
-fn test_script_function_in_mustache() {
+fn script_function_in_mustache() {
     let input = r#"
     <script type="prevue">
         function fullName(user) {
@@ -26,7 +26,7 @@ fn test_script_function_in_mustache() {
 }
 
 #[test]
-fn test_script_const_arrow_function_in_if() {
+fn script_const_arrow_function_in_if() {
     let input = r#"
     <script type="prevue">
         const isAdult = user => user.age >= 18;
@@ -52,7 +52,7 @@ fn test_script_const_arrow_function_in_if() {
 }
 
 #[test]
-fn test_script_helpers_in_for_and_bind() {
+fn script_helpers_in_for_and_bind() {
     let input = r#"
     <script type="prevue">
         const visible = items => items.filter(item => item.visible);
@@ -84,7 +84,7 @@ fn test_script_helpers_in_for_and_bind() {
 }
 
 #[test]
-fn test_script_execution_order() {
+fn script_execution_order() {
     let input = r#"
     <script type="prevue">
         const base = 2;
@@ -103,7 +103,7 @@ fn test_script_execution_order() {
 }
 
 #[test]
-fn test_script_helpers_are_not_available_before_execution() {
+fn script_helpers_are_not_available_before_execution() {
     let input = r#"
     <p>{{ helper() }}</p>
     <script type="prevue">
@@ -120,7 +120,7 @@ fn test_script_helpers_are_not_available_before_execution() {
 }
 
 #[test]
-fn test_script_var_and_class_declarations() {
+fn script_var_and_class_declarations() {
     let input = r#"
     <script type="prevue">
         var prefix = 'hi';
@@ -144,7 +144,7 @@ fn test_script_var_and_class_declarations() {
 }
 
 #[test]
-fn test_regular_script_is_preserved_and_not_executed() {
+fn regular_script_is_preserved_and_not_executed() {
     let input = r#"
     <script>
         const helper = () => 'client';
@@ -162,7 +162,7 @@ fn test_regular_script_is_preserved_and_not_executed() {
 }
 
 #[test]
-fn test_script_inside_pre_is_preserved_and_not_executed() {
+fn script_inside_pre_is_preserved_and_not_executed() {
     let input = r#"
     <div v-pre>
         <script type="prevue">
@@ -184,7 +184,7 @@ fn test_script_inside_pre_is_preserved_and_not_executed() {
 }
 
 #[test]
-fn test_script_with_pre_is_preserved_and_not_executed() {
+fn script_with_pre_is_preserved_and_not_executed() {
     let input = r#"
     <script type="prevue" v-pre>
         const helper = () => 'pre';
@@ -202,7 +202,7 @@ fn test_script_with_pre_is_preserved_and_not_executed() {
 }
 
 #[test]
-fn test_script_inside_plain_template_is_inert() {
+fn script_inside_plain_template_is_inert() {
     let input = r#"
     <template>
         <script type="prevue">
@@ -220,7 +220,7 @@ fn test_script_inside_plain_template_is_inert() {
 }
 
 #[test]
-fn test_script_if_false_does_not_execute() {
+fn script_if_false_does_not_execute() {
     let input = r#"
     <script type="prevue" v-if="false">
         const helper = () => 'ready';
@@ -236,7 +236,7 @@ fn test_script_if_false_does_not_execute() {
 }
 
 #[test]
-fn test_script_if_true_executes_and_is_removed() {
+fn script_if_true_executes_and_is_removed() {
     let input = r#"
     <script type="prevue" v-if="true">
         const helper = () => 'ready';
@@ -252,7 +252,7 @@ fn test_script_if_true_executes_and_is_removed() {
 }
 
 #[test]
-fn test_script_for_executes_in_iteration_scope() {
+fn script_for_executes_in_iteration_scope() {
     let input = r#"
     <script type="prevue">
         const seen = [];
@@ -271,7 +271,7 @@ fn test_script_for_executes_in_iteration_scope() {
 }
 
 #[test]
-fn test_script_inside_structural_template_executes_when_reached() {
+fn script_inside_structural_template_executes_when_reached() {
     let input = r#"
     <template v-if="ready">
         <script type="prevue">
@@ -289,7 +289,7 @@ fn test_script_inside_structural_template_executes_when_reached() {
 }
 
 #[test]
-fn test_script_inside_skipped_structural_template_does_not_execute() {
+fn script_inside_skipped_structural_template_does_not_execute() {
     let input = r#"
     <template v-if="ready">
         <script type="prevue">
@@ -307,7 +307,7 @@ fn test_script_inside_skipped_structural_template_does_not_execute() {
 }
 
 #[test]
-fn test_script_can_access_data_alias() {
+fn script_can_access_data_alias() {
     let input = r#"
     <script type="prevue">
         const first = () => $.items[0];
@@ -323,7 +323,7 @@ fn test_script_can_access_data_alias() {
 }
 
 #[test]
-fn test_script_syntax_error_returns_error() {
+fn script_syntax_error_returns_error() {
     let input = r#"
     <script type="prevue">
         const =
@@ -335,7 +335,7 @@ fn test_script_syntax_error_returns_error() {
 }
 
 #[test]
-fn test_script_runtime_error_returns_error() {
+fn script_runtime_error_returns_error() {
     let input = r#"
     <script type="prevue">
         throw new Error('boom');
@@ -347,7 +347,7 @@ fn test_script_runtime_error_returns_error() {
 }
 
 #[test]
-fn test_script_orphan_else_errors_before_execution() {
+fn script_orphan_else_errors_before_execution() {
     let input = r#"
     <script type="prevue" v-else>
         const helper = () => 'should not run';

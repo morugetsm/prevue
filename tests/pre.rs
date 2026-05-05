@@ -13,7 +13,7 @@ fn data() -> Value {
 // === Basic Behavior ===
 
 #[test]
-fn test_pre_basic() {
+fn pre_basic() {
     let input = r#"
     <div>
         <div v-pre>PRE</div>
@@ -29,7 +29,7 @@ fn test_pre_basic() {
 }
 
 #[test]
-fn test_pre_empty() {
+fn pre_empty() {
     let input = r#"
     <div>
         <div v-pre></div>
@@ -47,7 +47,7 @@ fn test_pre_empty() {
 // === Interpolation ===
 
 #[test]
-fn test_pre_with_mustache() {
+fn pre_with_mustache() {
     let input = r#"
     <div>
         <div v-pre>{{ message }} {{ count }}</div>
@@ -63,7 +63,7 @@ fn test_pre_with_mustache() {
 }
 
 #[test]
-fn test_pre_multiline() {
+fn pre_multiline() {
     let input = r#"
     <div>
         <div v-pre>
@@ -87,7 +87,7 @@ fn test_pre_multiline() {
 // === Directives & Attributes ===
 
 #[test]
-fn test_pre_with_if() {
+fn pre_with_if() {
     let input = r#"
     <div>
         <div v-pre v-if="isVisible">{{ message }}</div>
@@ -103,7 +103,7 @@ fn test_pre_with_if() {
 }
 
 #[test]
-fn test_pre_with_bind() {
+fn pre_with_bind() {
     let input = r#"
     <div>
         <div v-pre :id="elementId">{{ message }}</div>
@@ -121,7 +121,7 @@ fn test_pre_with_bind() {
 // === Nested Elements ===
 
 #[test]
-fn test_pre_with_nested_directives() {
+fn pre_with_nested_directives() {
     let input = r#"
     <div>
         <div v-pre>
@@ -145,7 +145,7 @@ fn test_pre_with_nested_directives() {
 }
 
 #[test]
-fn test_pre_nested_pre() {
+fn pre_nested_pre() {
     let input = r#"
     <div>
         <div v-pre>
@@ -169,7 +169,7 @@ fn test_pre_nested_pre() {
 // === Isolation ===
 
 #[test]
-fn test_pre_sibling_elements() {
+fn pre_sibling_elements() {
     let input = r#"
     <div>
         <p>{{ message }}</p>

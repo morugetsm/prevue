@@ -20,7 +20,7 @@ fn data() -> Value {
 // === Basic Binding ===
 
 #[test]
-fn test_bind_basic() {
+fn bind_basic() {
     // v-bind:attr="expr" (long form) and :attr="expr" (colon shorthand)
     let input = r#"
     <div>
@@ -39,7 +39,7 @@ fn test_bind_basic() {
 }
 
 #[test]
-fn test_bind_same_name_shorthand() {
+fn bind_same_name_shorthand() {
     // :attr with no value uses the attribute name as the expression
     let input = r#"
     <div>
@@ -60,7 +60,7 @@ fn test_bind_same_name_shorthand() {
 // === Dynamic Key Binding ===
 
 #[test]
-fn test_bind_dynamic_key() {
+fn bind_dynamic_key() {
     // :[expr]="value" — attribute name resolved from expression
     let input = r#"
     <div>
@@ -79,7 +79,7 @@ fn test_bind_dynamic_key() {
 }
 
 #[test]
-fn test_bind_dynamic_key_no_value() {
+fn bind_dynamic_key_no_value() {
     // :[expr] with no value is not supported — attribute is removed
     let input = r#"
     <div>
@@ -98,7 +98,7 @@ fn test_bind_dynamic_key_no_value() {
 }
 
 #[test]
-fn test_bind_dynamic_key_unclosed() {
+fn bind_dynamic_key_unclosed() {
     // malformed dynamic key (missing ] or [) falls through as a literal attr name
     let input = r#"
     <div>
@@ -117,7 +117,7 @@ fn test_bind_dynamic_key_unclosed() {
 }
 
 #[test]
-fn test_bind_dynamic_key_lowercase() {
+fn bind_dynamic_key_lowercase() {
     // HTML5 lowercases attribute names, so camelCase dynamic keys silently fail
     let input = r#"
     <div>
@@ -144,7 +144,7 @@ fn test_bind_dynamic_key_lowercase() {
 // === Expression Values ===
 
 #[test]
-fn test_bind_expression() {
+fn bind_expression() {
     // attribute value can be any JS expression
     let input = r#"
     <div>
@@ -163,7 +163,7 @@ fn test_bind_expression() {
 }
 
 #[test]
-fn test_bind_statement() {
+fn bind_statement() {
     // unlike Vue, prevue currently allows both expressions and statements in v-bind
     let input = r#"
     <div>
@@ -184,7 +184,7 @@ fn test_bind_statement() {
 // === Null / Undefined ===
 
 #[test]
-fn test_bind_null_undefined() {
+fn bind_null_undefined() {
     // null or undefined value removes the attribute entirely
     let input = r#"
     <div>
@@ -205,7 +205,7 @@ fn test_bind_null_undefined() {
 // === False ===
 
 #[test]
-fn test_bind_false_kept() {
+fn bind_false_kept() {
     // false keeps the attribute as "false" — only null/undefined remove it
     let input = r#"
     <div>
@@ -224,7 +224,7 @@ fn test_bind_false_kept() {
 // === Object Syntax ===
 
 #[test]
-fn test_bind_object() {
+fn bind_object() {
     // v-bind="obj" spreads object properties as attributes; null values are filtered out
     let input = r#"
     <div>
@@ -241,7 +241,7 @@ fn test_bind_object() {
 }
 
 #[test]
-fn test_bind_object_overrides_existing_attr() {
+fn bind_object_overrides_existing_attr() {
     // v-bind="obj" overrides a static attribute that shares the same name
     let input = r#"
     <div>
@@ -258,7 +258,7 @@ fn test_bind_object_overrides_existing_attr() {
 }
 
 #[test]
-fn test_bind_object_literal() {
+fn bind_object_literal() {
     let input = r#"
     <div>
         <span v-bind="{ id, value: value * 2, hidden: null, skip: undefined, ok: false }">elem</span>
@@ -276,7 +276,7 @@ fn test_bind_object_literal() {
 // === Class / Style Normalization ===
 
 #[test]
-fn test_bind_class_merges_static_and_object() {
+fn bind_class_merges_static_and_object() {
     let input = r#"
     <div>
         <p class="base" :class="{ active: true, hidden: false, titled: id }">elem</p>
@@ -292,7 +292,7 @@ fn test_bind_class_merges_static_and_object() {
 }
 
 #[test]
-fn test_bind_class_array() {
+fn bind_class_array() {
     let input = r#"
     <div>
         <p :class="['btn', [id, { active: true, hidden: false }], null]">elem</p>
@@ -308,7 +308,7 @@ fn test_bind_class_array() {
 }
 
 #[test]
-fn test_bind_object_class_merges_static() {
+fn bind_object_class_merges_static() {
     let input = r#"
     <div>
         <p class="base" v-bind="{ class: ['from-bind', { active: true }], id }">elem</p>
@@ -324,7 +324,7 @@ fn test_bind_object_class_merges_static() {
 }
 
 #[test]
-fn test_bind_style_merges_static_and_object() {
+fn bind_style_merges_static_and_object() {
     let input = r#"
     <div>
         <p style="color: red" :style="{ fontSize: '12px', 'line-height': 1.5, '--gap': '4px', display: null }">elem</p>
@@ -340,7 +340,7 @@ fn test_bind_style_merges_static_and_object() {
 }
 
 #[test]
-fn test_bind_style_array() {
+fn bind_style_array() {
     let input = r#"
     <div>
         <p :style="['color: red', { fontSize: '12px' }, { marginTop: value + 'px' }]">elem</p>
@@ -356,7 +356,7 @@ fn test_bind_style_array() {
 }
 
 #[test]
-fn test_bind_object_style_merges_static() {
+fn bind_object_style_merges_static() {
     let input = r#"
     <div>
         <p style="color: red;" v-bind="{ style: [{ fontSize: '12px' }, 'background: blue'], id }">elem</p>

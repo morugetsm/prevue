@@ -14,7 +14,7 @@ fn data() -> Value {
 // === Basic Behavior ===
 
 #[test]
-fn test_if_basic() {
+fn if_basic() {
     let input = r#"
     <div>
         <p>Hello, world!</p>
@@ -35,7 +35,7 @@ fn test_if_basic() {
 }
 
 #[test]
-fn test_if_truthy_cast() {
+fn if_truthy_cast() {
     // JS truthiness: 0 is false, non-empty array is true
     let input = r#"
     <div>
@@ -53,7 +53,7 @@ fn test_if_truthy_cast() {
 }
 
 #[test]
-fn test_if_edge_cases() {
+fn if_edge_cases() {
     // empty string literal, null, undefined, NaN are falsy; Infinity is truthy
     let input = r#"
     <div>
@@ -75,7 +75,7 @@ fn test_if_edge_cases() {
 }
 
 #[test]
-fn test_else_if_empty_string_literal_is_falsy() {
+fn else_if_empty_string_literal_is_falsy() {
     let input = r#"
     <div>
         <div v-if="false">IF</div>
@@ -95,7 +95,7 @@ fn test_else_if_empty_string_literal_is_falsy() {
 // === Expression ===
 
 #[test]
-fn test_if_expression() {
+fn if_expression() {
     // v-if evaluates arbitrary JS expressions against data
     let input = r#"
     <div>
@@ -115,7 +115,7 @@ fn test_if_expression() {
 // === Same-Element Directives ===
 
 #[test]
-fn test_if_with_else_on_same_element() {
+fn if_with_else_on_same_element() {
     let input = r#"
     <div>
         <div v-if="true" v-else>first</div>
@@ -128,7 +128,7 @@ fn test_if_with_else_on_same_element() {
 }
 
 #[test]
-fn test_if_with_else_if_on_same_element() {
+fn if_with_else_if_on_same_element() {
     let input = r#"
     <div>
         <div v-if="true" v-else-if="false">first</div>
@@ -141,7 +141,7 @@ fn test_if_with_else_if_on_same_element() {
 }
 
 #[test]
-fn test_if_empty_expression_error() {
+fn if_empty_expression_error() {
     let input = r#"
     <div>
         <div v-if="">empty</div>
@@ -155,7 +155,7 @@ fn test_if_empty_expression_error() {
 }
 
 #[test]
-fn test_else_if_empty_expression_error() {
+fn else_if_empty_expression_error() {
     let input = r#"
     <div>
         <div v-if="false">IF</div>
@@ -170,7 +170,7 @@ fn test_else_if_empty_expression_error() {
 }
 
 #[test]
-fn test_else_with_expression_error() {
+fn else_with_expression_error() {
     let input = r#"
     <div>
         <div v-if="false">IF</div>
@@ -187,7 +187,7 @@ fn test_else_with_expression_error() {
 // === Priority over v-for ===
 
 #[test]
-fn test_if_takes_priority_over_for() {
+fn if_takes_priority_over_for() {
     // v-if takes precedence over v-for — element renders once, not per iteration
     let input = r#"
     <div>
@@ -204,7 +204,7 @@ fn test_if_takes_priority_over_for() {
 }
 
 #[test]
-fn test_if_for_scope_unavailable() {
+fn if_for_scope_unavailable() {
     // v-if is evaluated before v-for regardless of attribute order,
     // so the loop variable is not available to v-if
     let input = r#"

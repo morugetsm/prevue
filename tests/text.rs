@@ -17,7 +17,7 @@ fn data() -> Value {
 // === Basic Behavior ===
 
 #[test]
-fn test_text_explicit_close() {
+fn text_explicit_close() {
     let input = r#"
     <div>
         <p v-text="str"></p>
@@ -33,7 +33,7 @@ fn test_text_explicit_close() {
 }
 
 #[test]
-fn test_text_self_closing() {
+fn text_self_closing() {
     let input = r#"
     <div>
         <p v-text="str" />
@@ -49,7 +49,7 @@ fn test_text_self_closing() {
 }
 
 #[test]
-fn test_text_self_closing_with_explicit_close() {
+fn text_self_closing_with_explicit_close() {
     // /> followed by </p> — HTML5 treats /> as > for non-void elements
     let input = r#"
     <div>
@@ -68,7 +68,7 @@ fn test_text_self_closing_with_explicit_close() {
 // === Overrides Inner Content ===
 
 #[test]
-fn test_text_overrides_inner_content() {
+fn text_overrides_inner_content() {
     let input = r#"
     <div>
         <p v-text="str">original content</p>
@@ -84,7 +84,7 @@ fn test_text_overrides_inner_content() {
 }
 
 #[test]
-fn test_text_overrides_mustache() {
+fn text_overrides_mustache() {
     // v-text wins over mustache expression in inner content
     let input = r#"
     <div>
@@ -101,7 +101,7 @@ fn test_text_overrides_mustache() {
 }
 
 #[test]
-fn test_text_self_closing_overrides_inner_text() {
+fn text_self_closing_overrides_inner_text() {
     // text between /> and </p> is treated as inner content and overridden
     let input = r#"
     <div>
@@ -118,7 +118,7 @@ fn test_text_self_closing_overrides_inner_text() {
 }
 
 #[test]
-fn test_text_self_closing_overrides_mustache() {
+fn text_self_closing_overrides_mustache() {
     // mustache between /> and </p> is treated as inner content and overridden
     let input = r#"
     <div>
@@ -137,7 +137,7 @@ fn test_text_self_closing_overrides_mustache() {
 // === Sibling Preservation ===
 
 #[test]
-fn test_text_self_closing_preserves_text_sibling() {
+fn text_self_closing_preserves_text_sibling() {
     // text sibling on the next line is preserved
     let input = r#"
     <div>
@@ -156,7 +156,7 @@ fn test_text_self_closing_preserves_text_sibling() {
 }
 
 #[test]
-fn test_text_self_closing_preserves_inline_sibling() {
+fn text_self_closing_preserves_inline_sibling() {
     // inline text immediately after /> remains after the element
     let input = r#"
     <div>
@@ -175,7 +175,7 @@ fn test_text_self_closing_preserves_inline_sibling() {
 // === Value Types ===
 
 #[test]
-fn test_text_null() {
+fn text_null() {
     // null data field: v-text is removed, inner content unchanged
     let input = r#"
     <div>
@@ -192,7 +192,7 @@ fn test_text_null() {
 }
 
 #[test]
-fn test_text_undefined() {
+fn text_undefined() {
     // undefined value: v-text is removed, inner content unchanged
     let input = r#"
     <div>
@@ -209,7 +209,7 @@ fn test_text_undefined() {
 }
 
 #[test]
-fn test_text_boolean() {
+fn text_boolean() {
     let input = r#"
     <div>
         <p v-text="bool_val" />
@@ -225,7 +225,7 @@ fn test_text_boolean() {
 }
 
 #[test]
-fn test_text_string() {
+fn text_string() {
     let input = r#"
     <div>
         <p v-text="str" />
@@ -241,7 +241,7 @@ fn test_text_string() {
 }
 
 #[test]
-fn test_text_number() {
+fn text_number() {
     let input = r#"
     <div>
         <p v-text="num" />
@@ -257,7 +257,7 @@ fn test_text_number() {
 }
 
 #[test]
-fn test_text_array_self_closing() {
+fn text_array_self_closing() {
     let input = r#"
     <div>
         <p v-text="arr" />
@@ -273,7 +273,7 @@ fn test_text_array_self_closing() {
 }
 
 #[test]
-fn test_text_array_explicit_close() {
+fn text_array_explicit_close() {
     let input = r#"
     <div>
         <p v-text="arr"></p>
@@ -289,7 +289,7 @@ fn test_text_array_explicit_close() {
 }
 
 #[test]
-fn test_text_array_vs_mustache() {
+fn text_array_vs_mustache() {
     let input = r#"
     <div>
         <p v-text="arr" />
@@ -307,7 +307,7 @@ fn test_text_array_vs_mustache() {
 }
 
 #[test]
-fn test_text_array_mixed() {
+fn text_array_mixed() {
     // array containing multiple value types
     let input = r#"
     <div>
@@ -324,7 +324,7 @@ fn test_text_array_mixed() {
 }
 
 #[test]
-fn test_text_array_mixed_vs_mustache() {
+fn text_array_mixed_vs_mustache() {
     let input = r#"
     <div>
         <p v-text="mixed_arr" />
@@ -342,7 +342,7 @@ fn test_text_array_mixed_vs_mustache() {
 }
 
 #[test]
-fn test_text_object() {
+fn text_object() {
     // plain object coerces to string like JS: [object Object]
     let input = r#"
     <div>
@@ -359,7 +359,7 @@ fn test_text_object() {
 }
 
 #[test]
-fn test_text_object_vs_mustache() {
+fn text_object_vs_mustache() {
     let input = r#"
     <div>
         <p v-text="obj" />
@@ -377,7 +377,7 @@ fn test_text_object_vs_mustache() {
 }
 
 #[test]
-fn test_text_object_mixed() {
+fn text_object_mixed() {
     // object with multiple value types coerces to string like JS: [object Object]
     let input = r#"
     <div>
@@ -394,7 +394,7 @@ fn test_text_object_mixed() {
 }
 
 #[test]
-fn test_text_object_mixed_vs_mustache() {
+fn text_object_mixed_vs_mustache() {
     let input = r#"
     <div>
         <p v-text="mixed_obj" />
@@ -414,7 +414,7 @@ fn test_text_object_mixed_vs_mustache() {
 // === Multiple Elements ===
 
 #[test]
-fn test_text_multiple_self_closing() {
+fn text_multiple_self_closing() {
     let input = r#"
     <div>
         <p v-text="arr" />
@@ -432,7 +432,7 @@ fn test_text_multiple_self_closing() {
 }
 
 #[test]
-fn test_text_multiple_explicit_close() {
+fn text_multiple_explicit_close() {
     let input = r#"
     <div>
         <p v-text="arr"></p>
@@ -450,7 +450,7 @@ fn test_text_multiple_explicit_close() {
 }
 
 #[test]
-fn test_text_multiple_different_values() {
+fn text_multiple_different_values() {
     // multiple v-text elements with different value types in the same container
     let input = r#"
     <div>

@@ -14,7 +14,7 @@ fn data() -> Value {
 // === Basic Behavior ===
 
 #[test]
-fn test_mustache_eval() {
+fn mustache_eval() {
     let input = r#"
     <div>
         {{ 1 + 1 }}
@@ -30,7 +30,7 @@ fn test_mustache_eval() {
 }
 
 #[test]
-fn test_mustache_multiple() {
+fn mustache_multiple() {
     let input = r#"
     <div>
         {{ 1 + 1 }} and {{ 2 + 2 }}
@@ -46,7 +46,7 @@ fn test_mustache_multiple() {
 }
 
 #[test]
-fn test_mustache_multiline() {
+fn mustache_multiline() {
     let input = r#"
     <div>
         {{ 
@@ -65,7 +65,7 @@ fn test_mustache_multiline() {
 }
 
 #[test]
-fn test_mustache_unclosed() {
+fn mustache_unclosed() {
     // Unclosed mustache is left untouched.
     let input = r#"
     <div>
@@ -82,7 +82,7 @@ fn test_mustache_unclosed() {
 }
 
 #[test]
-fn test_mustache_empty() {
+fn mustache_empty() {
     // Empty mustache evaluates to empty or undefined
     let input = r#"
     <div>
@@ -101,7 +101,7 @@ fn test_mustache_empty() {
 // === Value Types ===
 
 #[test]
-fn test_mustache_array() {
+fn mustache_array() {
     let input = r#"
     <div>
         <p>Hello, world!</p>
@@ -119,7 +119,7 @@ fn test_mustache_array() {
 }
 
 #[test]
-fn test_mustache_object() {
+fn mustache_object() {
     let input = r#"
     <div>
         <p>Hello, world!</p>
@@ -143,7 +143,7 @@ fn test_mustache_object() {
 // === Data Alias ===
 
 #[test]
-fn test_data_alias_mustache() {
+fn data_alias_mustache() {
     let input = r#"
     <div>
         <div>{{ user.name }}</div>
@@ -161,7 +161,7 @@ fn test_data_alias_mustache() {
 }
 
 #[test]
-fn test_data_alias_directives() {
+fn data_alias_directives() {
     let input = r#"
     <div>
         <p v-if="$.user.age >= 18">{{ $.user.name }}</p>
@@ -185,7 +185,7 @@ fn test_data_alias_directives() {
 }
 
 #[test]
-fn test_data_alias_non_object() {
+fn data_alias_non_object() {
     let input = r#"
     <div>{{ $ }}</div>
     "#;
@@ -197,7 +197,7 @@ fn test_data_alias_non_object() {
 }
 
 #[test]
-fn test_data_alias_reserved_collision() {
+fn data_alias_reserved_collision() {
     let input = r#"
     <div>
         <p>{{ $.user.name }}</p>
@@ -224,7 +224,7 @@ fn test_data_alias_reserved_collision() {
 }
 
 #[test]
-fn test_mustache_falsy() {
+fn mustache_falsy() {
     let input = r#"
     <div>
         <div>{{ false }}</div>
@@ -250,7 +250,7 @@ fn test_mustache_falsy() {
 // === Statements ===
 
 #[test]
-fn test_mustache_statement() {
+fn mustache_statement() {
     // unlike Vue, prevue currently allows both expressions and statements (e.g., `{{ let x = 1; x + 1 }}`)
     let input = r#"
     <div>
@@ -267,7 +267,7 @@ fn test_mustache_statement() {
 }
 
 #[test]
-fn test_mustache_error() {
+fn mustache_error() {
     // an expression that throws an error (e.g. ReferenceError) should fallback to an empty string safely
     let input = r#"
     <div>
@@ -288,7 +288,7 @@ fn test_mustache_error() {
 // === Scope & Isolation ===
 
 #[test]
-fn test_mustache_this() {
+fn mustache_this() {
     // can't serialize this
     let input = r#"
     <div>
@@ -305,7 +305,7 @@ fn test_mustache_this() {
 }
 
 #[test]
-fn test_mustache_comment() {
+fn mustache_comment() {
     // JavaScript comments inside mustache are valid
     let input = r#"
     <div>
@@ -329,7 +329,7 @@ fn test_mustache_comment() {
 }
 
 #[test]
-fn test_mustache_this_json() {
+fn mustache_this_json() {
     // JSON.stringify(this) exposes internal scope details; keep the assertion loose.
     let input = r#"
     <div>
@@ -343,7 +343,7 @@ fn test_mustache_this_json() {
 }
 
 #[test]
-fn test_mustache_isolation() {
+fn mustache_isolation() {
     let input = r#"
     <div>
         <h1>{{ let x = 1; x }}</h1>
