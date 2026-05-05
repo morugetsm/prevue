@@ -203,6 +203,49 @@ fn template_for_element_linebreak_with_less_indent() {
 }
 
 #[test]
+fn template_expansion_preserves_pre_text_indentation() {
+    let input = r#"
+    <div>
+        <template v-if="true">
+            <pre>
+                keep
+            </pre>
+        </template>
+    </div>
+    "#;
+    let output = render(input, data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <pre>                keep
+        </pre>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn template_expansion_preserves_v_pre_subtree_indentation() {
+    let input = r#"
+    <div>
+        <template v-if="true">
+            <div v-pre>
+                {{ message }}
+            </div>
+        </template>
+    </div>
+    "#;
+    let output = render(input, data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <div>
+            {{ message }}
+        </div>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
 fn template_for_complex() {
     let input = r#"
     <div>

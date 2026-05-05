@@ -65,6 +65,91 @@ fn mustache_multiline() {
 }
 
 #[test]
+fn mustache_string_can_contain_closing_delimiter() {
+    let input = r#"
+    <div>
+        {{ "}}" }}
+    </div>
+    "#;
+    let output = render(input, data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        }}
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn mustache_string_variants_can_contain_closing_delimiter() {
+    let input = r#"
+    <div>
+        <p>{{ "{{" }}</p>
+        <p>{{ '}}' }}</p>
+        <p>{{ `}}` }}</p>
+        <p>{{ "{{}}" }}</p>
+        <p>{{ "escaped \" }} still string" }}</p>
+        <p>{{ "}}" }} and {{ 2 + 2 }}</p>
+    </div>
+    "#;
+    let output = render(input, data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <p>{{</p>
+        <p>}}</p>
+        <p>}}</p>
+        <p>{{}}</p>
+        <p>escaped " }} still string</p>
+        <p>}} and 4</p>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn mustache_comments_can_contain_closing_delimiter() {
+    let input = r#"
+    <div>
+        <p>{{
+            // {{ and }} inside a line comment
+            "line"
+        }}</p>
+        <p>{{ /* {{ and }} inside a block comment */ "block" }}</p>
+    </div>
+    "#;
+    let output = render(input, data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <p>line</p>
+        <p>block</p>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn mustache_comments_can_contain_opening_delimiter() {
+    let input = r#"
+    <div>
+        <p>{{
+            // {{ inside a line comment
+            // }} inside a line comment
+            "line"
+        }}</p>
+        <p>{{ /* {{ inside a block comment */ "block" }}</p>
+    </div>
+    "#;
+    let output = render(input, data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <p>line</p>
+        <p>block</p>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
 fn mustache_unclosed() {
     // Unclosed mustache is left untouched.
     let input = r#"

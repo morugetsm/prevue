@@ -1,5 +1,3 @@
-use std::sync::atomic::AtomicUsize;
-
 use boa_ast::{
     Statement, StatementListItem,
     declaration::{Binding, Declaration},
@@ -26,8 +24,8 @@ pub(crate) struct ForBinding {
 pub(crate) struct Engine {
     pub context: Context,
     scope_keys: Vec<String>,
-    scope_next: AtomicUsize,
-    binding_next: AtomicUsize,
+    scope_next: usize,
+    binding_next: usize,
 }
 
 impl Engine {
@@ -35,8 +33,8 @@ impl Engine {
         let mut engine = Self {
             context: Context::default(),
             scope_keys: Default::default(),
-            scope_next: AtomicUsize::new(0),
-            binding_next: AtomicUsize::new(0),
+            scope_next: 0,
+            binding_next: 0,
         };
 
         engine.enter_scope().map_err(|err| Error::Scope {
@@ -68,11 +66,8 @@ impl Engine {
     }
 
     pub fn enter_scope(&mut self) -> JsResult<()> {
-        let key = format!(
-            "__scope_{}",
-            self.scope_next
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        );
+        let key = format!("__scope_{}", self.scope_next);
+        self.scope_next += 1;
         let scope = ObjectInitializer::new(&mut self.context).build();
         self.context.global_object().set(
             JsString::from(key.as_str()),
@@ -154,11 +149,8 @@ impl Engine {
         let Some(scope_key) = self.scope_keys.last().cloned() else {
             return false;
         };
-        let temp_key = format!(
-            "__temp_{}",
-            self.binding_next
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        );
+        let temp_key = format!("__temp_{}", self.binding_next);
+        self.binding_next += 1;
 
         let slot_array = JsArray::from_iter(slots, &mut self.context);
 

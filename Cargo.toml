@@ -15,9 +15,8 @@ categories = ["template-engine"]
 boa_ast = "0.21"
 boa_engine = { version = "0.21", features = ["deser"] }
 boa_parser = "0.21"
-html5ever = "0.38.0"
-markup5ever_rcdom = "0.38.0"
-regex = "1.12"
+html5ever = "0.39.0"
+markup5ever_rcdom = "0.39.0"
 serde = "1.0"
 serde_json = { version = "1.0", features = ["preserve_order"] }
-thiserror = "2"
+thiserror = "2.0"

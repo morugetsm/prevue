@@ -42,6 +42,28 @@ impl fmt::Display for DirectiveErrorKind {
     }
 }
 
+fn format_field(field: &Option<String>) -> String {
+    match field {
+        Some(field) => format!(" field {field:?}"),
+        None => String::new(),
+    }
+}
+
+fn format_expression(expression: &Option<String>) -> String {
+    match expression {
+        Some(expression) if !expression.is_empty() => format!(" {expression:?}"),
+        _ => String::new(),
+    }
+}
+
+fn format_directives(directives: &[Directive]) -> String {
+    directives
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("failed to parse template: {source}")]
@@ -68,13 +90,19 @@ pub enum Error {
         source: serde_json::Error,
     },
 
-    #[error("failed to convert render data to JavaScript: {message}")]
+    #[error(
+        "failed to convert render data{field} to JavaScript: {message}",
+        field = format_field(field)
+    )]
     DataToJs {
         field: Option<String>,
         message: String,
     },
 
-    #[error("failed to inject render data: {message}")]
+    #[error(
+        "failed to inject render data{field}: {message}",
+        field = format_field(field)
+    )]
     DataInject {
         field: Option<String>,
         message: String,
@@ -83,17 +111,23 @@ pub enum Error {
     #[error("failed to manage JavaScript scope: {message}")]
     Scope { message: String },
 
-    #[error("failed to execute prevue script: {message}")]
+    #[error("failed to execute <script type=\"prevue\">: {message}")]
     SetupScript { message: String },
 
-    #[error("invalid {directive}: {kind}")]
+    #[error(
+        "invalid {directive}: {kind}{expression}",
+        expression = format_expression(expression)
+    )]
     InvalidDirective {
         directive: Directive,
         kind: DirectiveErrorKind,
         expression: Option<String>,
     },
 
-    #[error("conflicting directives: {directives:?}")]
+    #[error(
+        "conflicting directives: {directives}",
+        directives = format_directives(directives)
+    )]
     ConflictingDirectives { directives: Vec<Directive> },
 }
 
