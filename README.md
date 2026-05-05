@@ -16,7 +16,7 @@ cargo add prevue
 ## API
 
 ```rust
-pub fn render(html: String, data: impl Serialize) -> Result<String, anyhow::Error>
+pub fn render(template: impl AsRef<str>, data: impl Serialize) -> Result<String, anyhow::Error>
 ```
 
 
@@ -26,7 +26,7 @@ pub fn render(html: String, data: impl Serialize) -> Result<String, anyhow::Erro
 use prevue::render;
 use serde_json::json;
 
-let html = r#"
+let template = r#"
     <div>
         <a :id="id">link</a>
         <p v-if="user.age >= 18">{{ user.name }} is adult</p>
@@ -34,7 +34,7 @@ let html = r#"
             <li v-for="item in list">{{ item }}</li>
         </ul>
     </div>
-"#.to_string();
+"#;
 
 let data = json!({
     "id": "link-id",
@@ -42,7 +42,7 @@ let data = json!({
     "list": ["a", "b", "c"],
 });
 
-let output = render(html, data).unwrap();
+let output = render(template, data).unwrap();
 // <html><head></head><body><div>
 //         <a id="link-id">link</a>
 //         <p>James is adult</p>
@@ -62,6 +62,7 @@ let output = render(html, data).unwrap();
 |---|---|---|
 | `{{ }}` | ✅ |  |
 | `<template>` | ✅ |  |
+| `<script type="prevue">` | ✅ | Server-side setup script |
 | `v-bind`, `:attr` | ✅ |  |
 | `v-if` | ✅ |  |
 | `v-else` | ✅ |  |
@@ -88,6 +89,7 @@ This library uses a [Boa](https://github.com/boa-dev/boa) JavaScript engine to e
 - ⚠️ **Security:** Never use untrusted templates or data.
 - **Evaluation Behavior:** Unlike Vue, which restricts each binding to a single expression, prevue currently allows both expressions and statements in all binding contexts (e.g., `:x="let n = 1; n + 1"` and `{{ let n = 1; n + 1 }}` → `2`). This may change in future versions to match Vue's behavior.
 - **Data Alias:** Top-level object fields are available directly, and the original data is also available as `$` (e.g., `{{ user.name }}` and `{{ $.user.name }}`). `$` is a reserved alias for the full data value; if your data contains a top-level `"$"` field, access it with `$["$"]`.
+- **Setup Script:** `<script type="prevue">` runs when rendering reaches it and can define helpers for following template expressions. Only `type="prevue"` scripts are executed; regular `<script>` tags are preserved. Executed setup scripts are removed from the rendered HTML. Setup scripts share the same scope as template expressions, including top-level data fields and `$`.
 - **Variable Access:** Accessing undeclared identifiers will cause the entire expression evaluation to fail, rather than returning `undefined`. Always ensure that variables exist in the provided data.
 - **`this` Context:** `this` is not Vue-compatible and may expose internal scope objects. Using `this` in templates is not recommended.
 

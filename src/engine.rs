@@ -1,7 +1,7 @@
 use std::sync::atomic::AtomicUsize;
 
 use boa_ast::{
-    StatementListItem,
+    Statement, StatementListItem,
     declaration::{Binding, Declaration},
     expression::Identifier,
     pattern::{ArrayPatternElement, ObjectPatternElement, Pattern},
@@ -211,6 +211,29 @@ impl Engine {
         }
     }
 
+    pub fn eval_setup(&mut self, code: &str) -> JsResult<()> {
+        let names = self.parse_setup_bindings(code)?;
+        let Some(scope_key) = self.scope_keys.last() else {
+            return Ok(());
+        };
+
+        let scope_ref = js_string_literal(scope_key);
+        let copies = names
+            .iter()
+            .filter(|name| name.as_str() != "$")
+            .map(|name| {
+                format!(
+                    "globalThis[{scope_ref}][{}] = {};",
+                    js_string_literal(name),
+                    name
+                )
+            })
+            .collect::<String>();
+        self.eval(&format!("{code}\n{copies}"))?;
+
+        Ok(())
+    }
+
     pub fn eval_expr(&mut self, code: &str) -> JsResult<JsValue> {
         let trimmed = code.trim();
         if trimmed.starts_with('{') {
@@ -241,6 +264,27 @@ impl Engine {
 
     pub fn eval_bool(&mut self, code: &str) -> Option<bool> {
         Some(self.eval_expr(code).ok()?.to_boolean())
+    }
+
+    fn parse_setup_bindings(&mut self, code: &str) -> JsResult<Vec<String>> {
+        let mut parser = Parser::new(ParserSource::from_bytes(code.as_bytes()));
+        let script = parser.parse_script(&Scope::new_global(), self.context.interner_mut())?;
+
+        let mut locals = Vec::new();
+        for statement in script.statements().statements() {
+            match statement {
+                StatementListItem::Declaration(declaration) => {
+                    collect_declaration_names(declaration, self.context.interner(), &mut locals);
+                }
+                StatementListItem::Statement(statement) => {
+                    if let Statement::Var(var) = statement.as_ref() {
+                        collect_variable_names(&var.0, self.context.interner(), &mut locals);
+                    }
+                }
+            }
+        }
+
+        Ok(locals)
     }
 }
 
@@ -294,6 +338,43 @@ fn collect_binding_names(
     match binding {
         Binding::Identifier(ident) => push_identifier(ident, interner, locals),
         Binding::Pattern(pattern) => collect_pattern_names(pattern, interner, locals),
+    }
+}
+
+fn collect_declaration_names(
+    declaration: &Declaration,
+    interner: &boa_engine::interner::Interner,
+    locals: &mut Vec<String>,
+) {
+    match declaration {
+        Declaration::FunctionDeclaration(function) => {
+            push_identifier(&function.name(), interner, locals);
+        }
+        Declaration::GeneratorDeclaration(function) => {
+            push_identifier(&function.name(), interner, locals);
+        }
+        Declaration::AsyncFunctionDeclaration(function) => {
+            push_identifier(&function.name(), interner, locals);
+        }
+        Declaration::AsyncGeneratorDeclaration(function) => {
+            push_identifier(&function.name(), interner, locals);
+        }
+        Declaration::ClassDeclaration(class) => {
+            push_identifier(&class.name(), interner, locals);
+        }
+        Declaration::Lexical(lexical) => {
+            collect_variable_names(lexical.variable_list(), interner, locals);
+        }
+    }
+}
+
+fn collect_variable_names(
+    variables: &boa_ast::declaration::VariableList,
+    interner: &boa_engine::interner::Interner,
+    locals: &mut Vec<String>,
+) {
+    for variable in variables.as_ref() {
+        collect_binding_names(variable.binding(), interner, locals);
     }
 }
 
