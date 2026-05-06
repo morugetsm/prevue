@@ -8,7 +8,7 @@ use boa_engine::{JsValue, JsVariant, property::PropertyKey};
 use html5ever::{
     QualName,
     driver::ParseOpts,
-    parse_document, parse_fragment, serialize,
+    parse_fragment, serialize,
     tendril::{StrTendril, TendrilSink},
 };
 use markup5ever_rcdom::{Handle, Node, NodeData, RcDom, SerializableHandle};
@@ -17,6 +17,8 @@ use serde_json::Value as JsonValue;
 
 mod engine;
 mod error;
+mod interpolation;
+mod template;
 use engine::{Engine, ForBinding};
 pub use error::{Directive, DirectiveErrorKind, Error, Result};
 
@@ -40,10 +42,7 @@ enum ContentAction {
 /// assert!(result.contains("Hello"));
 /// ```
 pub fn render(template: impl AsRef<str>, data: impl Serialize) -> Result<String> {
-    let dom = parse_document(RcDom::default(), ParseOpts::default())
-        .from_utf8()
-        .read_from(&mut template.as_ref().as_bytes())
-        .map_err(|source| Error::ParseTemplate { source })?;
+    let dom = template::parse(template.as_ref())?;
     let mut engine = Engine::new(data)?;
     traverse(&Rc::clone(&dom.document), &mut engine)?;
 
@@ -68,6 +67,14 @@ fn is_setup_script(handle: &Handle) -> bool {
         && attrs.borrow().iter().any(|attr| {
             attr.name.local.as_ref() == "type" && attr.value.trim().eq_ignore_ascii_case("prevue")
         })
+}
+
+fn is_raw_text_element(handle: &Handle) -> bool {
+    let NodeData::Element { name, .. } = &handle.data else {
+        return false;
+    };
+
+    matches!(name.local.as_ref(), "script" | "style")
 }
 
 fn text_content(handle: &Handle) -> String {
@@ -103,6 +110,10 @@ fn traverse(handle: &Handle, engine: &mut Engine) -> Result<bool> {
     }
 
     if process_node_content(handle, engine)? == ContentAction::SkipChildren {
+        return Ok(true);
+    }
+
+    if is_raw_text_element(handle) {
         return Ok(true);
     }
 
@@ -300,99 +311,13 @@ fn process_node_content(handle: &Handle, engine: &mut Engine) -> Result<ContentA
         NodeData::Text { contents } => {
             let mut content = contents.borrow_mut();
 
-            if let Some(rendered) = render_mustache_text(&content, engine) {
+            if let Some(rendered) = interpolation::render_text(&content, engine) {
                 *content = StrTendril::from_str(&rendered).unwrap();
             }
             Ok(ContentAction::TraverseChildren)
         }
         _ => Ok(ContentAction::TraverseChildren),
     }
-}
-
-fn render_mustache_text(content: &str, engine: &mut Engine) -> Option<String> {
-    let mut rendered = String::new();
-    let mut cursor = 0;
-    let mut changed = false;
-
-    while let Some(open_offset) = content[cursor..].find("{{") {
-        let open = cursor + open_offset;
-        let expr_start = open + 2;
-        let Some(close) = find_mustache_end(content, expr_start) else {
-            break;
-        };
-
-        rendered.push_str(&content[cursor..open]);
-        let expr = content[expr_start..close].trim();
-        rendered.push_str(&engine.eval_fmt(expr).unwrap_or_default());
-        cursor = close + 2;
-        changed = true;
-    }
-
-    if changed {
-        rendered.push_str(&content[cursor..]);
-        Some(rendered)
-    } else {
-        None
-    }
-}
-
-#[derive(Clone, Copy)]
-enum JsScanState {
-    Code,
-    String(char),
-    LineComment,
-    BlockComment,
-}
-
-fn find_mustache_end(content: &str, start: usize) -> Option<usize> {
-    let mut state = JsScanState::Code;
-    let mut escaped = false;
-    let mut iter = content[start..].char_indices().peekable();
-
-    while let Some((offset, ch)) = iter.next() {
-        let pos = start + offset;
-
-        match state {
-            JsScanState::Code => match ch {
-                '\'' | '"' | '`' => {
-                    state = JsScanState::String(ch);
-                    escaped = false;
-                }
-                '/' if iter.peek().is_some_and(|(_, next)| *next == '/') => {
-                    iter.next();
-                    state = JsScanState::LineComment;
-                }
-                '/' if iter.peek().is_some_and(|(_, next)| *next == '*') => {
-                    iter.next();
-                    state = JsScanState::BlockComment;
-                }
-                '}' if iter.peek().is_some_and(|(_, next)| *next == '}') => return Some(pos),
-                _ => {}
-            },
-            JsScanState::String(quote) => {
-                if escaped {
-                    escaped = false;
-                } else if ch == '\\' {
-                    escaped = true;
-                } else if ch == quote {
-                    state = JsScanState::Code;
-                }
-            }
-            JsScanState::LineComment => {
-                if ch == '\n' {
-                    state = JsScanState::Code;
-                }
-            }
-            JsScanState::BlockComment => {
-                if ch == '*' && iter.peek().is_some_and(|(_, next)| *next == '/') {
-                    iter.next();
-                    state = JsScanState::Code;
-                }
-            }
-        }
-    }
-
-    None
 }
 
 fn parse_html_fragment(context_name: &QualName, html: &str) -> Vec<Handle> {

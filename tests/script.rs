@@ -162,6 +162,24 @@ fn regular_script_is_preserved_and_not_executed() {
 }
 
 #[test]
+fn regular_script_and_style_mustache_are_inert() {
+    let input = r#"
+    <script>
+        const template = "{{ '<br />' }}";
+    </script>
+    <style>
+        .x::before { content: "{{ '<br />' }}"; }
+    </style>
+    <p>{{ missing }}</p>
+    "#;
+    let output = render(input, json!({})).unwrap();
+
+    assert!(output.contains(r#"const template = "{{ '<br />' }}";"#));
+    assert!(output.contains(r#".x::before { content: "{{ '<br />' }}"; }"#));
+    assert!(output.contains("<p></p>"));
+}
+
+#[test]
 fn script_inside_pre_is_preserved_and_not_executed() {
     let input = r#"
     <div v-pre>

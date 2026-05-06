@@ -150,6 +150,55 @@ fn mustache_comments_can_contain_opening_delimiter() {
 }
 
 #[test]
+fn mustache_html_like_string_is_rendered_as_text() {
+    let input = r#"<div>{{ content.split('\n').join('<br />') }}</div>"#;
+    let output = render(input, json!({ "content": "first\nsecond" })).unwrap();
+
+    let expected = r#"<html><head></head><body><div>first&lt;br /&gt;second</div></body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn mustache_html_like_literal_is_rendered_as_text() {
+    let input = r#"<div>{{ '<span>text</span>' }}</div>"#;
+    let output = render(input, data()).unwrap();
+
+    let expected =
+        r#"<html><head></head><body><div>&lt;span&gt;text&lt;/span&gt;</div></body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn mustache_html_like_literal_with_multiple_interpolations() {
+    let input = r#"<div>{{ '<span>text</span>' }} and {{ 2 + 2 }}</div>"#;
+    let output = render(input, data()).unwrap();
+
+    let expected =
+        r#"<html><head></head><body><div>&lt;span&gt;text&lt;/span&gt; and 4</div></body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn mustache_in_static_attribute_is_not_interpolated() {
+    let input = r#"<div title="{{ '<br />' }}">{{ 1 + 1 }}</div>"#;
+    let output = render(input, data()).unwrap();
+
+    let expected =
+        r#"<html><head></head><body><div title="{{ '&lt;br /&gt;' }}">2</div></body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn html_like_static_attribute_value_is_preserved() {
+    let input = r#"<div data-html="<br />">{{ 1 + 1 }}</div>"#;
+    let output = render(input, data()).unwrap();
+
+    let expected =
+        r#"<html><head></head><body><div data-html="&lt;br /&gt;">2</div></body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
 fn mustache_unclosed() {
     // Unclosed mustache is left untouched.
     let input = r#"

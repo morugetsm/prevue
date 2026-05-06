@@ -84,6 +84,22 @@ fn pre_multiline() {
     assert_eq!(output, expected);
 }
 
+#[test]
+fn pre_with_html_like_mustache_string() {
+    let input = r#"
+    <div>
+        <div v-pre>{{ '<br />' }}</div>
+    </div>
+    "#;
+    let output = render(input, data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <div>{{ '&lt;br /&gt;' }}</div>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
 // === Directives & Attributes ===
 
 #[test]
