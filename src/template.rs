@@ -77,10 +77,9 @@ fn mask_template_mustaches(template: &str) -> (String, MustacheMask) {
             continue;
         }
 
-        let ch = template[cursor..]
-            .chars()
-            .next()
-            .expect("cursor is within template");
+        let Some(ch) = template[cursor..].chars().next() else {
+            break;
+        };
         masked.push(ch);
         cursor += ch.len_utf8();
     }
@@ -96,7 +95,7 @@ fn mask_template_mustaches(template: &str) -> (String, MustacheMask) {
 
 fn unique_mustache_placeholder_prefix(template: &str) -> String {
     for salt in 0.. {
-        let prefix = format!("\u{E000}PREVUE_MUSTACHE_{salt}_");
+        let prefix = format!("\u{E000}TEMPLATE_INTERPOLATION_{salt}_");
         if !template.contains(&prefix) {
             return prefix;
         }
@@ -134,19 +133,12 @@ fn restore_masked_mustaches(handle: &Handle, mask: &MustacheMask) {
 }
 
 fn restore_masked_text(text: &str, mask: &MustacheMask) -> Option<String> {
-    let first = text.find(&mask.placeholder_prefix)?;
     let mut restored = String::with_capacity(text.len());
     let mut cursor = 0;
     let mut changed = false;
 
-    loop {
-        let start = if cursor == 0 {
-            first
-        } else if let Some(offset) = text[cursor..].find(&mask.placeholder_prefix) {
-            cursor + offset
-        } else {
-            break;
-        };
+    while let Some(offset) = text[cursor..].find(&mask.placeholder_prefix) {
+        let start = cursor + offset;
         let index_start = start + mask.placeholder_prefix.len();
 
         restored.push_str(&text[cursor..start]);

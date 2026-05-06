@@ -31,6 +31,7 @@ pub(crate) fn render_text(content: &str, engine: &mut Engine) -> Option<String> 
 enum JsScanState {
     Code,
     String(char),
+    Regex { in_class: bool },
     LineComment,
     BlockComment,
 }
@@ -45,6 +46,8 @@ where
 {
     let mut state = JsScanState::Code;
     let mut escaped = false;
+    let mut can_start_regex = true;
+    let mut after_property_dot = false;
     let mut iter = content[start..].char_indices().peekable();
 
     while let Some((offset, ch)) = iter.next() {
@@ -52,9 +55,12 @@ where
 
         match state {
             JsScanState::Code => match ch {
+                ch if ch.is_whitespace() => {}
                 '\'' | '"' | '`' => {
                     state = JsScanState::String(ch);
                     escaped = false;
+                    can_start_regex = false;
+                    after_property_dot = false;
                 }
                 '/' if iter.peek().is_some_and(|(_, next)| *next == '/') => {
                     iter.next();
@@ -64,9 +70,61 @@ where
                     iter.next();
                     state = JsScanState::BlockComment;
                 }
+                '/' if can_start_regex => {
+                    state = JsScanState::Regex { in_class: false };
+                    escaped = false;
+                    can_start_regex = false;
+                    after_property_dot = false;
+                }
                 '<' if should_stop(pos) => return None,
                 '}' if iter.peek().is_some_and(|(_, next)| *next == '}') => return Some(pos),
-                _ => {}
+                ch if is_js_identifier_start(ch) => {
+                    let mut end = pos + ch.len_utf8();
+                    while let Some((next_offset, next_ch)) = iter.peek().copied() {
+                        if !is_js_identifier_continue(next_ch) {
+                            break;
+                        }
+                        iter.next();
+                        end = start + next_offset + next_ch.len_utf8();
+                    }
+
+                    let word = &content[pos..end];
+                    can_start_regex = !after_property_dot && keyword_allows_regex_after(word);
+                    after_property_dot = false;
+                }
+                ch if ch.is_ascii_digit() => {
+                    while let Some((_, next_ch)) = iter.peek().copied() {
+                        if !(next_ch.is_ascii_alphanumeric() || matches!(next_ch, '.' | '_')) {
+                            break;
+                        }
+                        iter.next();
+                    }
+                    can_start_regex = false;
+                    after_property_dot = false;
+                }
+                '.' => {
+                    can_start_regex = false;
+                    after_property_dot = true;
+                }
+                '+' | '-' if iter.peek().is_some_and(|(_, next)| *next == ch) => {
+                    iter.next();
+                    after_property_dot = false;
+                }
+                '(' | '[' | '{' | ',' | ';' | ':' | '?' => {
+                    can_start_regex = true;
+                    after_property_dot = false;
+                }
+                ')' | ']' | '}' => {
+                    can_start_regex = false;
+                    after_property_dot = false;
+                }
+                '/' | '=' | '!' | '+' | '-' | '*' | '%' | '&' | '|' | '^' | '~' | '<' | '>' => {
+                    can_start_regex = true;
+                    after_property_dot = false;
+                }
+                _ => {
+                    after_property_dot = false;
+                }
             },
             JsScanState::String(quote) => {
                 if escaped {
@@ -75,6 +133,22 @@ where
                     escaped = true;
                 } else if ch == quote {
                     state = JsScanState::Code;
+                }
+            }
+            JsScanState::Regex { in_class } => {
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if in_class {
+                    if ch == ']' {
+                        state = JsScanState::Regex { in_class: false };
+                    }
+                } else if ch == '[' {
+                    state = JsScanState::Regex { in_class: true };
+                } else if ch == '/' {
+                    state = JsScanState::Code;
+                    can_start_regex = false;
                 }
             }
             JsScanState::LineComment => {
@@ -92,4 +166,30 @@ where
     }
 
     None
+}
+
+fn is_js_identifier_start(ch: char) -> bool {
+    ch == '$' || ch == '_' || ch.is_ascii_alphabetic()
+}
+
+fn is_js_identifier_continue(ch: char) -> bool {
+    is_js_identifier_start(ch) || ch.is_ascii_digit()
+}
+
+fn keyword_allows_regex_after(word: &str) -> bool {
+    matches!(
+        word,
+        "return"
+            | "throw"
+            | "typeof"
+            | "void"
+            | "delete"
+            | "new"
+            | "await"
+            | "yield"
+            | "case"
+            | "in"
+            | "of"
+            | "instanceof"
+    )
 }

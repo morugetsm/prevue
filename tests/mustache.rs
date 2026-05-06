@@ -150,6 +150,58 @@ fn mustache_comments_can_contain_opening_delimiter() {
 }
 
 #[test]
+fn mustache_regex_literals_can_contain_closing_delimiter() {
+    let input = r#"
+    <div>
+        <p>{{ /}}/.test("}}") }}</p>
+        <p>{{ "a}}b".replace(/}}/g, "x") }}</p>
+        <p>{{ /[}}]+/.test("}") }}</p>
+        <p>{{ /<br \/>/.test("<br />") }}</p>
+    </div>
+    "#;
+    let output = render(input, data()).unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <p>true</p>
+        <p>axb</p>
+        <p>true</p>
+        <p>true</p>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn mustache_division_still_works_with_regex_scanner() {
+    let input = r#"
+    <div>
+        <p>{{ total / count }}</p>
+        <p>{{ let count = 4; count++ / 2 }}</p>
+        <p>{{ value.return / 2 }}</p>
+    </div>
+    "#;
+    let output = render(
+        input,
+        json!({
+            "total": 8,
+            "count": 2,
+            "value": {
+                "return": 8
+            }
+        }),
+    )
+    .unwrap();
+
+    let expected = r#"<html><head></head><body><div>
+        <p>4</p>
+        <p>2</p>
+        <p>4</p>
+    </div>
+    </body></html>"#;
+    assert_eq!(output, expected);
+}
+
+#[test]
 fn mustache_html_like_string_is_rendered_as_text() {
     let input = r#"<div>{{ content.split('\n').join('<br />') }}</div>"#;
     let output = render(input, json!({ "content": "first\nsecond" })).unwrap();
