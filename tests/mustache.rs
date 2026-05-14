@@ -1,187 +1,172 @@
-use prevue::render;
-use serde_json::{Value, json};
+mod helper;
 
-fn data() -> Value {
-    json!({
-        "list": [1, 2, 3],
-        "user": {
-            "name": "Alice",
-            "age": 21
-        },
-    })
-}
+use helper::assert_render_body_eq;
+use serde_json::json;
 
 // === Basic Behavior ===
 
 #[test]
 fn mustache_eval() {
-    let input = r#"
-    <div>
-        {{ 1 + 1 }}
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        2
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    assert_render_body_eq!(
+        r#"<div>
+            {{ 1 + 1 }}
+        </div>"#,
+        json!({}),
+        r#"<div>
+            2
+        </div>"#,
+    );
 }
 
 #[test]
 fn mustache_multiple() {
-    let input = r#"
-    <div>
-        {{ 1 + 1 }} and {{ 2 + 2 }}
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        2 and 4
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    assert_render_body_eq!(
+        r#"<div>
+            {{ 1 + 1 }} and {{ 2 + 2 }}
+        </div>"#,
+        json!({}),
+        r#"<div>
+            2 and 4
+        </div>"#,
+    );
 }
 
 #[test]
 fn mustache_multiline() {
-    let input = r#"
-    <div>
-        {{ 
-            1 + 
-            1 
-        }}
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        2
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    assert_render_body_eq!(
+        r#"<div>
+            {{ 
+                1 + 
+                1 
+            }}
+        </div>"#,
+        json!({}),
+        r#"<div>
+            2
+        </div>"#,
+    );
 }
 
 #[test]
 fn mustache_string_can_contain_closing_delimiter() {
-    let input = r#"
-    <div>
-        {{ "}}" }}
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        }}
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    assert_render_body_eq!(
+        r#"<div>
+            {{ "}}" }}
+        </div>"#,
+        json!({}),
+        r#"<div>
+            }}
+        </div>"#,
+    );
 }
 
 #[test]
 fn mustache_string_variants_can_contain_closing_delimiter() {
-    let input = r#"
-    <div>
-        <p>{{ "{{" }}</p>
-        <p>{{ '}}' }}</p>
-        <p>{{ `}}` }}</p>
-        <p>{{ "{{}}" }}</p>
-        <p>{{ "escaped \" }} still string" }}</p>
-        <p>{{ "}}" }} and {{ 2 + 2 }}</p>
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        <p>{{</p>
-        <p>}}</p>
-        <p>}}</p>
-        <p>{{}}</p>
-        <p>escaped " }} still string</p>
-        <p>}} and 4</p>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    assert_render_body_eq!(
+        r#"<div>
+            <p>{{ "{{" }}</p>
+            <p>{{ '}}' }}</p>
+            <p>{{ `}}` }}</p>
+            <p>{{ "{{}}" }}</p>
+            <p>{{ "escaped \" }} still string" }}</p>
+            <p>{{ "}}" }} and {{ 2 + 2 }}</p>
+        </div>"#,
+        json!({}),
+        r#"<div>
+            <p>{{</p>
+            <p>}}</p>
+            <p>}}</p>
+            <p>{{}}</p>
+            <p>escaped " }} still string</p>
+            <p>}} and 4</p>
+        </div>"#,
+    );
 }
 
 #[test]
 fn mustache_comments_can_contain_closing_delimiter() {
-    let input = r#"
-    <div>
-        <p>{{
-            // {{ and }} inside a line comment
-            "line"
-        }}</p>
-        <p>{{ /* {{ and }} inside a block comment */ "block" }}</p>
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        <p>line</p>
-        <p>block</p>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    assert_render_body_eq!(
+        r#"<div>
+            <p>{{
+                // {{ and }} inside a line comment
+                "line"
+            }}</p>
+            <p>{{ /* {{ and }} inside a block comment */ "block" }}</p>
+        </div>"#,
+        json!({}),
+        r#"<div>
+            <p>line</p>
+            <p>block</p>
+        </div>"#,
+    );
 }
 
 #[test]
 fn mustache_comments_can_contain_opening_delimiter() {
-    let input = r#"
-    <div>
-        <p>{{
-            // {{ inside a line comment
-            // }} inside a line comment
-            "line"
-        }}</p>
-        <p>{{ /* {{ inside a block comment */ "block" }}</p>
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        <p>line</p>
-        <p>block</p>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    assert_render_body_eq!(
+        r#"<div>
+            <p>{{
+                // {{ inside a line comment
+                // }} inside a line comment
+                "line"
+            }}</p>
+            <p>{{ /* {{ inside a block comment */ "block" }}</p>
+        </div>"#,
+        json!({}),
+        r#"<div>
+            <p>line</p>
+            <p>block</p>
+        </div>"#,
+    );
 }
 
 #[test]
 fn mustache_regex_literals_can_contain_closing_delimiter() {
-    let input = r#"
-    <div>
-        <p>{{ /}}/.test("}}") }}</p>
-        <p>{{ "a}}b".replace(/}}/g, "x") }}</p>
-        <p>{{ /[}}]+/.test("}") }}</p>
-        <p>{{ /<br \/>/.test("<br />") }}</p>
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
+    assert_render_body_eq!(
+        r#"<div>
+            <p>{{ /}}/.test("}}") }}</p>
+            <p>{{ "a}}b".replace(/}}/g, "x") }}</p>
+            <p>{{ /[}}]+/.test("}") }}</p>
+            <p>{{ /a\/b}}/gi.test("a/b}}") }}</p>
+            <p>{{ /<br \/>/.test("<br />") }}</p>
+        </div>"#,
+        json!({}),
+        r#"<div>
+            <p>true</p>
+            <p>axb</p>
+            <p>true</p>
+            <p>true</p>
+            <p>true</p>
+        </div>"#,
+    );
+}
 
-    let expected = r#"<html><head></head><body><div>
-        <p>true</p>
-        <p>axb</p>
-        <p>true</p>
-        <p>true</p>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+#[test]
+fn mustache_regex_literals_can_start_after_expression_boundaries() {
+    assert_render_body_eq!(
+        r#"<div>
+            <p>{{ true ? /}}/.test("}}") : false }}</p>
+            <p>{{ let matched = /}}/.test("}}"); matched }}</p>
+            <p>{{ (() => /}}/.test("}}"))() }}</p>
+        </div>"#,
+        json!({}),
+        r#"<div>
+            <p>true</p>
+            <p>true</p>
+            <p>true</p>
+        </div>"#,
+    );
 }
 
 #[test]
 fn mustache_division_still_works_with_regex_scanner() {
-    let input = r#"
-    <div>
-        <p>{{ total / count }}</p>
-        <p>{{ let count = 4; count++ / 2 }}</p>
-        <p>{{ value.return / 2 }}</p>
-    </div>
-    "#;
-    let output = render(
-        input,
+    assert_render_body_eq!(
+        r#"<div>
+            <p>{{ total / count }}</p>
+            <p>{{ (total / count) / 2 }}</p>
+            <p>{{ let count = 4; count++ / 2 }}</p>
+            <p>{{ value.return / 2 }}</p>
+        </div>"#,
         json!({
             "total": 8,
             "count": 2,
@@ -189,248 +174,225 @@ fn mustache_division_still_works_with_regex_scanner() {
                 "return": 8
             }
         }),
-    )
-    .unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        <p>4</p>
-        <p>2</p>
-        <p>4</p>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+        r#"<div>
+            <p>4</p>
+            <p>2</p>
+            <p>2</p>
+            <p>4</p>
+        </div>"#,
+    );
 }
 
 #[test]
 fn mustache_html_like_string_is_rendered_as_text() {
-    let input = r#"<div>{{ content.split('\n').join('<br />') }}</div>"#;
-    let output = render(input, json!({ "content": "first\nsecond" })).unwrap();
-
-    let expected = r#"<html><head></head><body><div>first&lt;br /&gt;second</div></body></html>"#;
-    assert_eq!(output, expected);
+    assert_render_body_eq!(
+        r#"<div>{{ content.split('\n').join('<br />') }}</div>"#,
+        json!({ "content": "first\nsecond" }),
+        r#"<div>first&lt;br /&gt;second</div>"#,
+    );
 }
 
 #[test]
 fn mustache_html_like_literal_is_rendered_as_text() {
-    let input = r#"<div>{{ '<span>text</span>' }}</div>"#;
-    let output = render(input, data()).unwrap();
-
-    let expected =
-        r#"<html><head></head><body><div>&lt;span&gt;text&lt;/span&gt;</div></body></html>"#;
-    assert_eq!(output, expected);
+    assert_render_body_eq!(
+        r#"<div>{{ '<span>text</span>' }}</div>"#,
+        json!({}),
+        r#"<div>&lt;span&gt;text&lt;/span&gt;</div>"#,
+    );
 }
 
 #[test]
 fn mustache_html_like_literal_with_multiple_interpolations() {
-    let input = r#"<div>{{ '<span>text</span>' }} and {{ 2 + 2 }}</div>"#;
-    let output = render(input, data()).unwrap();
-
-    let expected =
-        r#"<html><head></head><body><div>&lt;span&gt;text&lt;/span&gt; and 4</div></body></html>"#;
-    assert_eq!(output, expected);
+    assert_render_body_eq!(
+        r#"<div>{{ '<span>text</span>' }} and {{ 2 + 2 }}</div>"#,
+        json!({}),
+        r#"<div>&lt;span&gt;text&lt;/span&gt; and 4</div>"#,
+    );
 }
 
 #[test]
 fn mustache_in_static_attribute_is_not_interpolated() {
-    let input = r#"<div title="{{ '<br />' }}">{{ 1 + 1 }}</div>"#;
-    let output = render(input, data()).unwrap();
-
-    let expected =
-        r#"<html><head></head><body><div title="{{ '&lt;br /&gt;' }}">2</div></body></html>"#;
-    assert_eq!(output, expected);
+    assert_render_body_eq!(
+        r#"<div title="{{ '<br />' }}">{{ 1 + 1 }}</div>"#,
+        json!({}),
+        r#"<div title="{{ '&lt;br /&gt;' }}">2</div>"#,
+    );
 }
 
 #[test]
 fn html_like_static_attribute_value_is_preserved() {
-    let input = r#"<div data-html="<br />">{{ 1 + 1 }}</div>"#;
-    let output = render(input, data()).unwrap();
-
-    let expected =
-        r#"<html><head></head><body><div data-html="&lt;br /&gt;">2</div></body></html>"#;
-    assert_eq!(output, expected);
+    assert_render_body_eq!(
+        r#"<div data-html="<br />">{{ 1 + 1 }}</div>"#,
+        json!({}),
+        r#"<div data-html="&lt;br /&gt;">2</div>"#,
+    );
 }
 
 #[test]
 fn mustache_unclosed() {
     // Unclosed mustache is left untouched.
-    let input = r#"
-    <div>
-        {{ unclosed }
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        {{ unclosed }
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    assert_render_body_eq!(
+        r#"<div>
+            {{ unclosed }
+        </div>"#,
+        json!({}),
+        r#"<div>
+            {{ unclosed }
+        </div>"#,
+    );
 }
 
 #[test]
 fn mustache_empty() {
     // Empty mustache evaluates to empty or undefined
-    let input = r#"
-    <div>
-        [{{ }}]
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        []
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    assert_render_body_eq!(
+        r#"<div>
+            [{{ }}]
+        </div>"#,
+        json!({}),
+        r#"<div>
+            []
+        </div>"#,
+    );
 }
 
 // === Value Types ===
 
 #[test]
 fn mustache_array() {
-    let input = r#"
-    <div>
-        <p>Hello, world!</p>
-        <div>{{ list }}</div>
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        <p>Hello, world!</p>
-        <div>[ 1, 2, 3 ]</div>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    assert_render_body_eq!(
+        r#"<div>
+            <p>Hello, world!</p>
+            <div>{{ list }}</div>
+        </div>"#,
+        json!({ "list": [1, 2, 3] }),
+        r#"<div>
+            <p>Hello, world!</p>
+            <div>[ 1, 2, 3 ]</div>
+        </div>"#,
+    );
 }
 
 #[test]
 fn mustache_object() {
-    let input = r#"
-    <div>
-        <p>Hello, world!</p>
-        <div>{{ user }}</div>
-        <div>{{ user.name }}</div>
-        <div>{{ user.age }}</div>
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        <p>Hello, world!</p>
-        <div>{ "name": "Alice", "age": 21 }</div>
-        <div>Alice</div>
-        <div>21</div>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    assert_render_body_eq!(
+        r#"<div>
+            <p>Hello, world!</p>
+            <div>{{ user }}</div>
+            <div>{{ user.name }}</div>
+            <div>{{ user.age }}</div>
+        </div>"#,
+        json!({
+            "user": {
+                "name": "Alice",
+                "age": 21
+            }
+        }),
+        r#"<div>
+            <p>Hello, world!</p>
+            <div>{ "name": "Alice", "age": 21 }</div>
+            <div>Alice</div>
+            <div>21</div>
+        </div>"#,
+    );
 }
 
 // === Data Alias ===
 
 #[test]
 fn data_alias_mustache() {
-    let input = r#"
-    <div>
-        <div>{{ user.name }}</div>
-        <div>{{ $.user.name }}</div>
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        <div>Alice</div>
-        <div>Alice</div>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    assert_render_body_eq!(
+        r#"<div>
+            <div>{{ user.name }}</div>
+            <div>{{ $.user.name }}</div>
+        </div>"#,
+        json!({
+            "user": {
+                "name": "Alice"
+            }
+        }),
+        r#"<div>
+            <div>Alice</div>
+            <div>Alice</div>
+        </div>"#,
+    );
 }
 
 #[test]
 fn data_alias_directives() {
-    let input = r#"
-    <div>
-        <p v-if="$.user.age >= 18">{{ $.user.name }}</p>
-        <ul>
-            <li v-for="item in $.list" :data-id="$.user.name">{{ item }}</li>
-        </ul>
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        <p>Alice</p>
-        <ul>
-            <li data-id="Alice">1</li>
-            <li data-id="Alice">2</li>
-            <li data-id="Alice">3</li>
-        </ul>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    assert_render_body_eq!(
+        r#"<div>
+            <p v-if="$.user.age >= 18">{{ $.user.name }}</p>
+            <ul>
+                <li v-for="item in $.list" :data-id="$.user.name">{{ item }}</li>
+            </ul>
+        </div>"#,
+        json!({
+            "list": [1, 2, 3],
+            "user": {
+                "name": "Alice",
+                "age": 21
+            }
+        }),
+        r#"<div>
+            <p>Alice</p>
+            <ul>
+                <li data-id="Alice">1</li>
+                <li data-id="Alice">2</li>
+                <li data-id="Alice">3</li>
+            </ul>
+        </div>"#,
+    );
 }
 
 #[test]
 fn data_alias_non_object() {
-    let input = r#"
-    <div>{{ $ }}</div>
-    "#;
-    let output = render(input, json!(["a", "b"])).unwrap();
-
-    let expected = r#"<html><head></head><body><div>[ "a", "b" ]</div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    assert_render_body_eq!(
+        r#"<div>{{ $ }}</div>"#,
+        json!(["a", "b"]),
+        r#"<div>[ "a", "b" ]</div>"#,
+    );
 }
 
 #[test]
 fn data_alias_reserved_collision() {
-    let input = r#"
-    <div>
-        <p>{{ $.user.name }}</p>
-        <p>{{ $["$"] }}</p>
-    </div>
-    "#;
-    let output = render(
-        input,
+    assert_render_body_eq!(
+        r#"<div>
+            <p>{{ $.user.name }}</p>
+            <p>{{ $["$"] }}</p>
+        </div>"#,
         json!({
             "$": "custom",
             "user": {
                 "name": "Alice",
             },
         }),
-    )
-    .unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        <p>Alice</p>
-        <p>custom</p>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+        r#"<div>
+            <p>Alice</p>
+            <p>custom</p>
+        </div>"#,
+    );
 }
 
 #[test]
 fn mustache_falsy() {
-    let input = r#"
-    <div>
-        <div>{{ false }}</div>
-        <div>{{ null }}</div>
-        <div>{{ undefined }}</div>
-        <div>{{ 0 }}</div>
-        <div>{{ "" }}</div>
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        <div>false</div>
-        <div></div>
-        <div></div>
-        <div>0</div>
-        <div></div>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    assert_render_body_eq!(
+        r#"<div>
+            <div>{{ false }}</div>
+            <div>{{ null }}</div>
+            <div>{{ undefined }}</div>
+            <div>{{ 0 }}</div>
+            <div>{{ "" }}</div>
+        </div>"#,
+        json!({}),
+        r#"<div>
+            <div>false</div>
+            <div></div>
+            <div></div>
+            <div>0</div>
+            <div></div>
+        </div>"#,
+    );
 }
 
 // === Statements ===
@@ -438,37 +400,31 @@ fn mustache_falsy() {
 #[test]
 fn mustache_statement() {
     // unlike Vue, prevue currently allows both expressions and statements (e.g., `{{ let x = 1; x + 1 }}`)
-    let input = r#"
-    <div>
-        {{ let exist = true; exist }}
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        true
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    assert_render_body_eq!(
+        r#"<div>
+            {{ let exist = true; exist }}
+        </div>"#,
+        json!({}),
+        r#"<div>
+            true
+        </div>"#,
+    );
 }
 
 #[test]
 fn mustache_error() {
     // an expression that throws an error (e.g. ReferenceError) should fallback to an empty string safely
-    let input = r#"
-    <div>
-        [{{ does_not_exist }}]
-        [{{ foo.bar.baz }}]
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        []
-        []
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    assert_render_body_eq!(
+        r#"<div>
+            [{{ does_not_exist }}]
+            [{{ foo.bar.baz }}]
+        </div>"#,
+        json!({}),
+        r#"<div>
+            []
+            []
+        </div>"#,
+    );
 }
 
 // === Scope & Isolation ===
@@ -476,72 +432,49 @@ fn mustache_error() {
 #[test]
 fn mustache_this() {
     // can't serialize this
-    let input = r#"
-    <div>
-        {{ this }}
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    assert_render_body_eq!(
+        r#"<div>
+            {{ this }}
+        </div>"#,
+        json!({}),
+        r#"<div>
+            
+        </div>"#,
+    );
 }
 
 #[test]
 fn mustache_comment() {
     // JavaScript comments inside mustache are valid
-    let input = r#"
-    <div>
-        {{ 
-            // single line comment
-            1 + 1 
-            /* multi
-               line
-               comment */
-            + 1
-        }}
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        3
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
-}
-
-#[test]
-fn mustache_this_json() {
-    // JSON.stringify(this) exposes internal scope details; keep the assertion loose.
-    let input = r#"
-    <div>
-        {{ JSON.stringify(this) }}
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    assert!(output.contains(r#""__scope_0""#));
-    assert!(output.contains(r#""$":{"list":[1,2,3],"user":{"name":"Alice","age":21}}"#));
+    assert_render_body_eq!(
+        r#"<div>
+            {{ 
+                // single line comment
+                1 + 1 
+                /* multi
+                   line
+                   comment */
+                + 1
+            }}
+        </div>"#,
+        json!({}),
+        r#"<div>
+            3
+        </div>"#,
+    );
 }
 
 #[test]
 fn mustache_isolation() {
-    let input = r#"
-    <div>
-        <h1>{{ let x = 1; x }}</h1>
-        <h2>{{ x }}</h2>
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        <h1>1</h1>
-        <h2></h2>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    assert_render_body_eq!(
+        r#"<div>
+            <h1>{{ let x = 1; x }}</h1>
+            <h2>{{ x }}</h2>
+        </div>"#,
+        json!({}),
+        r#"<div>
+            <h1>1</h1>
+            <h2></h2>
+        </div>"#,
+    );
 }

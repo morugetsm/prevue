@@ -1,59 +1,57 @@
+mod helper;
+
+use helper::assert_render_eq;
 use prevue::{Directive, DirectiveErrorKind, Error, render};
 use serde_json::json;
 
+// === Setup Script Helpers ===
+
 #[test]
 fn script_function_in_mustache() {
-    let input = r#"
+    assert_render_eq!(
+        r#"
     <script type="prevue">
         function fullName(user) {
             return `${user.first} ${user.last}`;
         }
     </script>
     <div>{{ fullName(user) }}</div>
-    "#;
-    let output = render(
-        input,
+    "#,
         json!({
             "user": { "first": "Ada", "last": "Lovelace" },
         }),
-    )
-    .unwrap();
-
-    let expected = r#"<html><head>
+        r#"<html><head>
     </head><body><div>Ada Lovelace</div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </body></html>"#,
+    );
 }
 
 #[test]
 fn script_const_arrow_function_in_if() {
-    let input = r#"
+    assert_render_eq!(
+        r#"
     <script type="prevue">
         const isAdult = user => user.age >= 18;
     </script>
     <div>
         <p v-if="isAdult(user)">{{ user.name }}</p>
     </div>
-    "#;
-    let output = render(
-        input,
+    "#,
         json!({
             "user": { "name": "Alice", "age": 21 },
         }),
-    )
-    .unwrap();
-
-    let expected = r#"<html><head>
+        r#"<html><head>
     </head><body><div>
         <p>Alice</p>
     </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </body></html>"#,
+    );
 }
 
 #[test]
 fn script_helpers_in_for_and_bind() {
-    let input = r#"
+    assert_render_eq!(
+        r#"
     <script type="prevue">
         const visible = items => items.filter(item => item.visible);
         const label = item => item.name.toUpperCase();
@@ -61,9 +59,7 @@ fn script_helpers_in_for_and_bind() {
     <ul>
         <li v-for="item in visible(items)" :data-name="label(item)">{{ label(item) }}</li>
     </ul>
-    "#;
-    let output = render(
-        input,
+    "#,
         json!({
             "items": [
                 { "name": "one", "visible": true },
@@ -71,21 +67,21 @@ fn script_helpers_in_for_and_bind() {
                 { "name": "three", "visible": true },
             ],
         }),
-    )
-    .unwrap();
-
-    let expected = r#"<html><head>
+        r#"<html><head>
     </head><body><ul>
         <li data-name="ONE">ONE</li>
         <li data-name="THREE">THREE</li>
     </ul>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </body></html>"#,
+    );
 }
+
+// === Execution Order & Scope ===
 
 #[test]
 fn script_execution_order() {
-    let input = r#"
+    assert_render_eq!(
+        r#"
     <script type="prevue">
         const base = 2;
     </script>
@@ -93,35 +89,35 @@ fn script_execution_order() {
         const double = value => value * base;
     </script>
     <p>{{ double(value) }}</p>
-    "#;
-    let output = render(input, json!({ "value": 3 })).unwrap();
-
-    let expected = r#"<html><head>
+    "#,
+        json!({ "value": 3 }),
+        r#"<html><head>
     </head><body><p>6</p>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </body></html>"#,
+    );
 }
 
 #[test]
 fn script_helpers_are_not_available_before_execution() {
-    let input = r#"
+    assert_render_eq!(
+        r#"
     <p>{{ helper() }}</p>
     <script type="prevue">
         const helper = () => 'ready';
     </script>
     <p>{{ helper() }}</p>
-    "#;
-    let output = render(input, json!({})).unwrap();
-
-    let expected = r#"<html><head></head><body><p></p>
+    "#,
+        json!({}),
+        r#"<html><head></head><body><p></p>
     <p>ready</p>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </body></html>"#,
+    );
 }
 
 #[test]
 fn script_var_and_class_declarations() {
-    let input = r#"
+    assert_render_eq!(
+        r#"
     <script type="prevue">
         var prefix = 'hi';
         class Greeter {
@@ -134,31 +130,32 @@ fn script_var_and_class_declarations() {
         }
     </script>
     <p>{{ new Greeter(user.name).greet() }}</p>
-    "#;
-    let output = render(input, json!({ "user": { "name": "Alice" } })).unwrap();
-
-    let expected = r#"<html><head>
+    "#,
+        json!({ "user": { "name": "Alice" } }),
+        r#"<html><head>
     </head><body><p>hi, Alice</p>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </body></html>"#,
+    );
 }
+
+// === Inert Script & Style ===
 
 #[test]
 fn regular_script_is_preserved_and_not_executed() {
-    let input = r#"
+    assert_render_eq!(
+        r#"
     <script>
         const helper = () => 'client';
     </script>
     <p>{{ helper() }}</p>
-    "#;
-    let output = render(input, json!({})).unwrap();
-
-    let expected = r#"<html><head><script>
+    "#,
+        json!({}),
+        r#"<html><head><script>
         const helper = () => 'client';
     </script>
     </head><body><p></p>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </body></html>"#,
+    );
 }
 
 #[test]
@@ -179,99 +176,104 @@ fn regular_script_and_style_mustache_are_inert() {
     assert!(output.contains("<p></p>"));
 }
 
+// === v-pre & Template Boundaries ===
+
 #[test]
 fn script_inside_pre_is_preserved_and_not_executed() {
-    let input = r#"
+    assert_render_eq!(
+        r#"
     <div v-pre>
         <script type="prevue">
             const helper = () => 'pre';
         </script>
         {{ helper() }}
     </div>
-    "#;
-    let output = render(input, json!({})).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
+    "#,
+        json!({}),
+        r#"<html><head></head><body><div>
         <script type="prevue">
             const helper = () => 'pre';
         </script>
         {{ helper() }}
     </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </body></html>"#,
+    );
 }
 
 #[test]
 fn script_with_pre_is_preserved_and_not_executed() {
-    let input = r#"
+    assert_render_eq!(
+        r#"
     <script type="prevue" v-pre>
         const helper = () => 'pre';
     </script>
     <p>{{ helper() }}</p>
-    "#;
-    let output = render(input, json!({})).unwrap();
-
-    let expected = r#"<html><head><script type="prevue">
+    "#,
+        json!({}),
+        r#"<html><head><script type="prevue">
         const helper = () => 'pre';
     </script>
     </head><body><p></p>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </body></html>"#,
+    );
 }
 
 #[test]
 fn script_inside_plain_template_is_inert() {
-    let input = r#"
+    assert_render_eq!(
+        r#"
     <template>
         <script type="prevue">
             const helper = () => 'template';
         </script>
     </template>
     <p>{{ helper() }}</p>
-    "#;
-    let output = render(input, json!({})).unwrap();
-
-    let expected = r#"<html><head><template></template>
+    "#,
+        json!({}),
+        r#"<html><head><template></template>
     </head><body><p></p>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </body></html>"#,
+    );
 }
+
+// === Structural Directives ===
 
 #[test]
 fn script_if_false_does_not_execute() {
-    let input = r#"
+    assert_render_eq!(
+        r#"
     <script type="prevue" v-if="false">
         const helper = () => 'ready';
     </script>
     <p>{{ helper() }}</p>
-    "#;
-    let output = render(input, json!({})).unwrap();
-
-    let expected = r#"<html><head>
+    "#,
+        json!({}),
+        r#"<html><head>
     </head><body><p></p>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </body></html>"#,
+    );
 }
 
 #[test]
 fn script_if_true_executes_and_is_removed() {
-    let input = r#"
+    assert_render_eq!(
+        r#"
     <script type="prevue" v-if="true">
         const helper = () => 'ready';
     </script>
     <p>{{ helper() }}</p>
-    "#;
-    let output = render(input, json!({})).unwrap();
-
-    let expected = r#"<html><head>
+    "#,
+        json!({}),
+        r#"<html><head>
     </head><body><p>ready</p>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </body></html>"#,
+    );
 }
 
 #[test]
 fn script_for_executes_in_iteration_scope() {
-    let input = r#"
+    assert_render_eq!(
+        r#"
     <script type="prevue">
         const seen = [];
     </script>
@@ -279,66 +281,69 @@ fn script_for_executes_in_iteration_scope() {
         seen.push(item);
     </script>
     <p>{{ seen.join(',') }}</p>
-    "#;
-    let output = render(input, json!({ "list": ["a", "b", "c"] })).unwrap();
-
-    let expected = r#"<html><head>
+    "#,
+        json!({ "list": ["a", "b", "c"] }),
+        r#"<html><head>
     </head><body><p>a,b,c</p>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </body></html>"#,
+    );
 }
 
 #[test]
 fn script_inside_structural_template_executes_when_reached() {
-    let input = r#"
+    assert_render_eq!(
+        r#"
     <template v-if="ready">
         <script type="prevue">
             const helper = () => 'template';
         </script>
     </template>
     <p>{{ helper() }}</p>
-    "#;
-    let output = render(input, json!({ "ready": true })).unwrap();
-
-    let expected = r#"<html><head>
+    "#,
+        json!({ "ready": true }),
+        r#"<html><head>
     </head><body><p>template</p>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </body></html>"#,
+    );
 }
 
 #[test]
 fn script_inside_skipped_structural_template_does_not_execute() {
-    let input = r#"
+    assert_render_eq!(
+        r#"
     <template v-if="ready">
         <script type="prevue">
             const helper = () => 'template';
         </script>
     </template>
     <p>{{ helper() }}</p>
-    "#;
-    let output = render(input, json!({ "ready": false })).unwrap();
-
-    let expected = r#"<html><head>
+    "#,
+        json!({ "ready": false }),
+        r#"<html><head>
     </head><body><p></p>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </body></html>"#,
+    );
 }
+
+// === Data Alias ===
 
 #[test]
 fn script_can_access_data_alias() {
-    let input = r#"
+    assert_render_eq!(
+        r#"
     <script type="prevue">
         const first = () => $.items[0];
     </script>
     <p>{{ first() }}</p>
-    "#;
-    let output = render(input, json!({ "items": ["a", "b"] })).unwrap();
-
-    let expected = r#"<html><head>
+    "#,
+        json!({ "items": ["a", "b"] }),
+        r#"<html><head>
     </head><body><p>a</p>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </body></html>"#,
+    );
 }
+
+// === Errors ===
 
 #[test]
 fn script_syntax_error_returns_error() {

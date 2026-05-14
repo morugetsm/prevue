@@ -1,416 +1,338 @@
-use prevue::render;
-use serde_json::{Value, json};
+mod helper;
 
-fn data() -> Value {
-    json!({
-        "null_val": null,
-        "bool_val": true,
-        "str": "Hello, world!",
-        "num": 42,
-        "arr": [ 1, 2, 3 ],
-        "obj": { "key": "value" },
-        "mixed_arr": [ null, true, "hello", 1, [4, 5, 6], { "a": "b" } ],
-        "mixed_obj": { "a": null, "b": true, "c": "hello", "d": 1, "e": [4, 5, 6], "f": { "g": "h" } },
-    })
-}
+use helper::assert_render_body_eq;
+use serde_json::json;
 
 // === Basic Behavior ===
 
 #[test]
 fn text_explicit_close() {
-    let input = r#"
-    <div>
+    assert_render_body_eq!(
+        r#"<div>
         <p v-text="str"></p>
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
+    </div>"#,
+        json!({ "str": "Hello, world!" }),
+        r#"<div>
         <p>Hello, world!</p>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </div>"#,
+    );
 }
 
 #[test]
 fn text_self_closing() {
-    let input = r#"
-    <div>
+    assert_render_body_eq!(
+        r#"<div>
         <p v-text="str" />
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        <p>Hello, world!</p></div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </div>"#,
+        json!({ "str": "Hello, world!" }),
+        r#"<div>
+        <p>Hello, world!</p></div>"#,
+    );
 }
 
 #[test]
 fn text_self_closing_with_explicit_close() {
-    // /> followed by </p> — HTML5 treats /> as > for non-void elements
-    let input = r#"
-    <div>
+    assert_render_body_eq!(
+        r#"<div>
         <p v-text="str" /></p>
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
+    </div>"#,
+        json!({ "str": "Hello, world!" }),
+        r#"<div>
         <p>Hello, world!</p>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </div>"#,
+    );
 }
 
 // === Overrides Inner Content ===
 
 #[test]
 fn text_overrides_inner_content() {
-    let input = r#"
-    <div>
+    assert_render_body_eq!(
+        r#"<div>
         <p v-text="str">original content</p>
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
+    </div>"#,
+        json!({ "str": "Hello, world!" }),
+        r#"<div>
         <p>Hello, world!</p>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </div>"#,
+    );
 }
 
 #[test]
 fn text_overrides_compact_inner_content() {
-    let input = r#"<div><p v-text="str">fallback</p></div>"#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div><p>Hello, world!</p></div></body></html>"#;
-    assert_eq!(output, expected);
+    assert_render_body_eq!(
+        r#"<div><p v-text="str">fallback</p></div>"#,
+        json!({ "str": "Hello, world!" }),
+        r#"<div><p>Hello, world!</p></div>"#,
+    );
 }
 
 #[test]
 fn text_overrides_mustache() {
-    // v-text wins over mustache expression in inner content
-    let input = r#"
-    <div>
+    assert_render_body_eq!(
+        r#"<div>
         <p v-text="str">{{ arr }}</p>
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
+    </div>"#,
+        json!({ "str": "Hello, world!" }),
+        r#"<div>
         <p>Hello, world!</p>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </div>"#,
+    );
 }
 
 #[test]
 fn text_self_closing_overrides_inner_text() {
-    // text between /> and </p> is treated as inner content and overridden
-    let input = r#"
-    <div>
+    assert_render_body_eq!(
+        r#"<div>
         <p v-text="str" />Hello</p>
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
+    </div>"#,
+        json!({ "str": "Hello, world!" }),
+        r#"<div>
         <p>Hello, world!</p>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </div>"#,
+    );
 }
 
 #[test]
 fn text_self_closing_overrides_mustache() {
-    // mustache between /> and </p> is treated as inner content and overridden
-    let input = r#"
-    <div>
+    assert_render_body_eq!(
+        r#"<div>
         <p v-text="str" />{{ true }}</p>
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
+    </div>"#,
+        json!({ "str": "Hello, world!" }),
+        r#"<div>
         <p>Hello, world!</p>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </div>"#,
+    );
 }
 
 // === Value Types ===
 
 #[test]
 fn text_null() {
-    // null data field: v-text is removed, inner content unchanged
-    let input = r#"
-    <div>
+    assert_render_body_eq!(
+        r#"<div>
         <p v-text="null_val"></p>
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
+    </div>"#,
+        json!({ "null_val": null }),
+        r#"<div>
         <p></p>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </div>"#,
+    );
 }
 
 #[test]
 fn text_undefined() {
-    // undefined value: v-text is removed, inner content unchanged
-    let input = r#"
-    <div>
+    assert_render_body_eq!(
+        r#"<div>
         <p v-text="undefined"></p>
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
+    </div>"#,
+        json!({}),
+        r#"<div>
         <p></p>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </div>"#,
+    );
 }
 
 #[test]
 fn text_boolean() {
-    let input = r#"
-    <div>
+    assert_render_body_eq!(
+        r#"<div>
         <p v-text="bool_val" />
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        <p>true</p></div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </div>"#,
+        json!({ "bool_val": true }),
+        r#"<div>
+        <p>true</p></div>"#,
+    );
 }
 
 #[test]
 fn text_string() {
-    let input = r#"
-    <div>
+    assert_render_body_eq!(
+        r#"<div>
         <p v-text="str" />
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        <p>Hello, world!</p></div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </div>"#,
+        json!({ "str": "Hello, world!" }),
+        r#"<div>
+        <p>Hello, world!</p></div>"#,
+    );
 }
 
 #[test]
 fn text_number() {
-    let input = r#"
-    <div>
+    assert_render_body_eq!(
+        r#"<div>
         <p v-text="num" />
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        <p>42</p></div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </div>"#,
+        json!({ "num": 42 }),
+        r#"<div>
+        <p>42</p></div>"#,
+    );
 }
 
 #[test]
 fn text_array_self_closing() {
-    let input = r#"
-    <div>
+    assert_render_body_eq!(
+        r#"<div>
         <p v-text="arr" />
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        <p>1,2,3</p></div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </div>"#,
+        json!({ "arr": [1, 2, 3] }),
+        r#"<div>
+        <p>1,2,3</p></div>"#,
+    );
 }
 
 #[test]
 fn text_array_explicit_close() {
-    let input = r#"
-    <div>
+    assert_render_body_eq!(
+        r#"<div>
         <p v-text="arr"></p>
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
+    </div>"#,
+        json!({ "arr": [1, 2, 3] }),
+        r#"<div>
         <p>1,2,3</p>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </div>"#,
+    );
 }
 
 #[test]
 fn text_array_vs_mustache() {
-    let input = r#"
-    <div>
+    assert_render_body_eq!(
+        r#"<div>
         <p v-text="arr" />
         <p>{{ arr }}</p>
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
+    </div>"#,
+        json!({ "arr": [1, 2, 3] }),
+        r#"<div>
         <p>1,2,3</p><p>[ 1, 2, 3 ]</p>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </div>"#,
+    );
 }
 
 #[test]
 fn text_array_mixed() {
-    // array containing multiple value types
-    let input = r#"
-    <div>
+    assert_render_body_eq!(
+        r#"<div>
         <p v-text="mixed_arr" />
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        <p>,true,hello,1,4,5,6,[object Object]</p></div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </div>"#,
+        json!({
+            "mixed_arr": [null, true, "hello", 1, [4, 5, 6], { "a": "b" }],
+        }),
+        r#"<div>
+        <p>,true,hello,1,4,5,6,[object Object]</p></div>"#,
+    );
 }
 
 #[test]
 fn text_array_mixed_vs_mustache() {
-    let input = r#"
-    <div>
+    assert_render_body_eq!(
+        r#"<div>
         <p v-text="mixed_arr" />
         <p>{{ mixed_arr }}</p>
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
+    </div>"#,
+        json!({
+            "mixed_arr": [null, true, "hello", 1, [4, 5, 6], { "a": "b" }],
+        }),
+        r#"<div>
         <p>,true,hello,1,4,5,6,[object Object]</p><p>[ null, true, "hello", 1, [ 4, 5, 6 ], { "a": "b" } ]</p>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </div>"#,
+    );
 }
 
 #[test]
 fn text_object() {
-    // plain object coerces to string like JS: [object Object]
-    let input = r#"
-    <div>
+    assert_render_body_eq!(
+        r#"<div>
         <p v-text="obj" />
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        <p>[object Object]</p></div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </div>"#,
+        json!({
+            "obj": { "key": "value" },
+        }),
+        r#"<div>
+        <p>[object Object]</p></div>"#,
+    );
 }
 
 #[test]
 fn text_object_vs_mustache() {
-    let input = r#"
-    <div>
+    assert_render_body_eq!(
+        r#"<div>
         <p v-text="obj" />
         <p>{{ obj }}</p>
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
+    </div>"#,
+        json!({
+            "obj": { "key": "value" },
+        }),
+        r#"<div>
         <p>[object Object]</p><p>{ "key": "value" }</p>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </div>"#,
+    );
 }
 
 #[test]
 fn text_object_mixed() {
-    // object with multiple value types coerces to string like JS: [object Object]
-    let input = r#"
-    <div>
+    assert_render_body_eq!(
+        r#"<div>
         <p v-text="mixed_obj" />
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        <p>[object Object]</p></div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </div>"#,
+        json!({
+            "mixed_obj": { "a": null, "b": true, "c": "hello", "d": 1, "e": [4, 5, 6], "f": { "g": "h" } },
+        }),
+        r#"<div>
+        <p>[object Object]</p></div>"#,
+    );
 }
 
 #[test]
 fn text_object_mixed_vs_mustache() {
-    let input = r#"
-    <div>
+    assert_render_body_eq!(
+        r#"<div>
         <p v-text="mixed_obj" />
         <p>{{ mixed_obj }}</p>
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
+    </div>"#,
+        json!({
+            "mixed_obj": { "a": null, "b": true, "c": "hello", "d": 1, "e": [4, 5, 6], "f": { "g": "h" } },
+        }),
+        r#"<div>
         <p>[object Object]</p><p>{ "a": null, "b": true, "c": "hello", "d": 1, "e": [ 4, 5, 6 ], "f": { "g": "h" } }</p>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </div>"#,
+    );
 }
 
 // === Multiple Elements ===
 
 #[test]
 fn text_multiple_self_closing() {
-    let input = r#"
-    <div>
+    assert_render_body_eq!(
+        r#"<div>
         <p v-text="arr" />
         <p v-text="arr" />
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
-        <p>1,2,3</p><p>1,2,3</p></div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </div>"#,
+        json!({ "arr": [1, 2, 3] }),
+        r#"<div>
+        <p>1,2,3</p><p>1,2,3</p></div>"#,
+    );
 }
 
 #[test]
 fn text_multiple_explicit_close() {
-    let input = r#"
-    <div>
+    assert_render_body_eq!(
+        r#"<div>
         <p v-text="arr"></p>
         <p v-text="arr"></p>
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
+    </div>"#,
+        json!({ "arr": [1, 2, 3] }),
+        r#"<div>
         <p>1,2,3</p>
         <p>1,2,3</p>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </div>"#,
+    );
 }
 
 #[test]
 fn text_multiple_different_values() {
-    // multiple v-text elements with different value types in the same container
-    let input = r#"
-    <div>
+    assert_render_body_eq!(
+        r#"<div>
         <p v-text="null_val"></p>
         <p v-text="bool_val"></p>
         <p v-text="str"></p>
@@ -419,11 +341,18 @@ fn text_multiple_different_values() {
         <p v-text="obj"></p>
         <p v-text="mixed_arr"></p>
         <p v-text="mixed_obj"></p>
-    </div>
-    "#;
-    let output = render(input, data()).unwrap();
-
-    let expected = r#"<html><head></head><body><div>
+    </div>"#,
+        json!({
+            "arr": [1, 2, 3],
+            "bool_val": true,
+            "mixed_arr": [null, true, "hello", 1, [4, 5, 6], { "a": "b" }],
+            "mixed_obj": { "a": null, "b": true, "c": "hello", "d": 1, "e": [4, 5, 6], "f": { "g": "h" } },
+            "null_val": null,
+            "num": 42,
+            "obj": { "key": "value" },
+            "str": "Hello, world!",
+        }),
+        r#"<div>
         <p></p>
         <p>true</p>
         <p>Hello, world!</p>
@@ -432,7 +361,6 @@ fn text_multiple_different_values() {
         <p>[object Object]</p>
         <p>,true,hello,1,4,5,6,[object Object]</p>
         <p>[object Object]</p>
-    </div>
-    </body></html>"#;
-    assert_eq!(output, expected);
+    </div>"#,
+    );
 }
