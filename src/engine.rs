@@ -195,6 +195,31 @@ impl Engine {
         result
     }
 
+    pub fn eval_with_temp_val<F>(&mut self, value: JsValue, build_code: F) -> JsResult<JsValue>
+    where
+        F: FnOnce(&str) -> String,
+    {
+        let temp_key = format!("__temp_{}", self.binding_next);
+        self.binding_next += 1;
+
+        self.context.global_object().set(
+            JsString::from(temp_key.as_str()),
+            value,
+            false,
+            &mut self.context,
+        )?;
+
+        let temp_ref = js_string_literal(&temp_key);
+        let result = self.eval(&build_code(&temp_ref));
+
+        let _ = self
+            .context
+            .global_object()
+            .delete_property_or_throw(JsString::from(temp_key), &mut self.context);
+
+        result
+    }
+
     pub fn eval(&mut self, code: &str) -> JsResult<JsValue> {
         let scoped = self
             .scope_keys

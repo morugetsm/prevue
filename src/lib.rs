@@ -4,7 +4,7 @@ use std::{
     str::FromStr,
 };
 
-use boa_engine::{JsValue, JsVariant, property::PropertyKey};
+use boa_engine::{JsValue, JsVariant, object::builtins::JsArray};
 use html5ever::{
     QualName,
     driver::ParseOpts,
@@ -742,47 +742,42 @@ fn process_for(node: &Handle, engine: &mut Engine, expr: &str) -> Result<Vec<Han
         result
     };
 
-    match engine
-        .eval_expr(expression.iterable_expr.trim())
-        .map(|val| val.variant())
-    {
-        Ok(JsVariant::Object(obj)) if obj.is_array() => {
-            let Some(keys) = obj.own_property_keys(&mut engine.context).ok() else {
-                return Ok(Vec::new());
-            };
+    let iterable = match engine.eval_expr(expression.iterable_expr.trim()) {
+        Ok(iterable) => iterable,
+        Err(_) => return Ok(result_nodes),
+    };
 
-            for property_key in keys.iter() {
-                let PropertyKey::Index(index) = property_key else {
-                    continue;
-                };
-
-                let item = obj
-                    .get(property_key.clone(), &mut engine.context)
-                    .unwrap_or(JsValue::undefined());
-                render_iteration(engine, vec![item, JsValue::new(index.get())])?;
+    match iterable.variant() {
+        JsVariant::Object(obj) if obj.is_array() => {
+            let items = array_values(engine, &obj);
+            for (idx, item) in items.into_iter().enumerate() {
+                render_iteration(engine, vec![item, JsValue::new(idx)])?;
             }
         }
-        Ok(JsVariant::Object(obj)) => {
-            let Some(property_keys) = obj.own_property_keys(&mut engine.context).ok() else {
-                return Ok(Vec::new());
-            };
-
-            for (idx, property_key) in property_keys.iter().enumerate() {
-                let value = obj
-                    .get(property_key.clone(), &mut engine.context)
-                    .unwrap_or(JsValue::undefined());
-                render_iteration(
-                    engine,
-                    vec![value, property_key.into(), JsValue::new(idx as i32)],
-                )?;
+        JsVariant::Object(obj) => {
+            if let Some(items) = iterable_values(engine, iterable.clone()) {
+                for (idx, item) in items.into_iter().enumerate() {
+                    render_iteration(engine, vec![item, JsValue::new(idx)])?;
+                }
+            } else {
+                let keys = object_keys(engine, iterable.clone());
+                for (idx, key) in keys.into_iter().enumerate() {
+                    let Some(key_string) = key.as_string() else {
+                        continue;
+                    };
+                    let value = obj
+                        .get(key_string.clone(), &mut engine.context)
+                        .unwrap_or(JsValue::undefined());
+                    render_iteration(engine, vec![value, key, JsValue::new(idx)])?;
+                }
             }
         }
-        Ok(JsVariant::Integer32(val)) => {
+        JsVariant::Integer32(val) => {
             for (idx, num) in (1..=val).enumerate() {
                 render_iteration(engine, vec![JsValue::new(num), JsValue::new(idx)])?;
             }
         }
-        Ok(JsVariant::String(val)) => {
+        JsVariant::String(val) => {
             for (idx, ch) in val.to_std_string_escaped().chars().enumerate() {
                 render_iteration(engine, vec![JsValue::new(ch), JsValue::new(idx)])?;
             }
@@ -791,6 +786,50 @@ fn process_for(node: &Handle, engine: &mut Engine, expr: &str) -> Result<Vec<Han
     }
 
     Ok(result_nodes)
+}
+
+fn array_values(engine: &mut Engine, obj: &boa_engine::object::JsObject) -> Vec<JsValue> {
+    let Ok(array) = JsArray::from_object(obj.clone()) else {
+        return Vec::new();
+    };
+    let Ok(length) = array.length(&mut engine.context) else {
+        return Vec::new();
+    };
+
+    (0..length)
+        .map(|idx| {
+            obj.get(idx, &mut engine.context)
+                .unwrap_or_else(|_| JsValue::undefined())
+        })
+        .collect()
+}
+
+fn object_keys(engine: &mut Engine, value: JsValue) -> Vec<JsValue> {
+    engine
+        .eval_with_temp_val(value, |temp_ref| {
+            format!("Object.keys(globalThis[{temp_ref}])")
+        })
+        .ok()
+        .and_then(|keys| keys.as_object().map(|obj| array_values(engine, &obj)))
+        .unwrap_or_default()
+}
+
+fn iterable_values(engine: &mut Engine, value: JsValue) -> Option<Vec<JsValue>> {
+    let value = engine
+        .eval_with_temp_val(value, |temp_ref| {
+            format!(
+                "let value = globalThis[{temp_ref}]; \
+                 let iterator = value == null ? undefined : value[Symbol.iterator]; \
+                 typeof iterator === 'function' ? Array.from(value) : null"
+            )
+        })
+        .ok()?;
+
+    match value.variant() {
+        JsVariant::Null | JsVariant::Undefined => None,
+        JsVariant::Object(obj) if obj.is_array() => Some(array_values(engine, &obj)),
+        _ => None,
+    }
 }
 
 fn parse_for_expression(engine: &mut Engine, expr: &str) -> Option<ForExpression> {

@@ -58,6 +58,36 @@ fn for_array_literal() {
 }
 
 #[test]
+fn for_sparse_array_uses_length() {
+    assert_render_body_eq!(
+        r#"<div>
+        <div v-for="item, index in let list = []; list[2] = 'C'; list">{{ `${index}:${item}` }}</div>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <div>0:undefined</div>
+        <div>1:undefined</div>
+        <div>2:C</div>
+    </div>"#,
+    );
+}
+
+#[test]
+fn for_empty_slots_array_uses_length() {
+    assert_render_body_eq!(
+        r#"<div>
+        <div v-for="item, index in Array(3)">{{ `${index}:${item}` }}</div>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <div>0:undefined</div>
+        <div>1:undefined</div>
+        <div>2:undefined</div>
+    </div>"#,
+    );
+}
+
+#[test]
 fn for_array_excess_arguments() {
     assert_render_body_eq!(
         r#"<div>
@@ -278,6 +308,32 @@ fn for_object_destructuring_key_index() {
     );
 }
 
+#[test]
+fn for_object_uses_enumerable_string_keys() {
+    assert_render_body_eq!(
+        r#"<div>
+        <p v-for="value, key in let obj = { visible: 'yes' }; Object.defineProperty(obj, 'hidden', { value: 'no', enumerable: false }); obj">{{ `${key}:${value}` }}</p>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <p>visible:yes</p>
+    </div>"#,
+    );
+}
+
+#[test]
+fn for_object_skips_symbol_keys() {
+    assert_render_body_eq!(
+        r#"<div>
+        <p v-for="value in let sym = Symbol('secret'); let obj = { visible: 'yes' }; obj[sym] = 'hidden'; obj">{{ value }}</p>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <p>yes</p>
+    </div>"#,
+    );
+}
+
 // === Number ===
 
 #[test]
@@ -487,6 +543,34 @@ fn for_special_char_variables() {
         <div>0: 1</div>
         <div>1: 2</div>
         <div>2: 3</div>
+    </div>"#,
+    );
+}
+
+#[test]
+fn for_set_iterable() {
+    assert_render_body_eq!(
+        r#"<div>
+        <p v-for="item in new Set(['a', 'b'])">{{ item }}</p>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <p>a</p>
+        <p>b</p>
+    </div>"#,
+    );
+}
+
+#[test]
+fn for_map_iterable() {
+    assert_render_body_eq!(
+        r#"<div>
+        <p v-for="[key, value] in new Map([['x', 1], ['y', 2]])">{{ `${key}:${value}` }}</p>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <p>x:1</p>
+        <p>y:2</p>
     </div>"#,
     );
 }
