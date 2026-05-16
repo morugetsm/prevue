@@ -327,6 +327,28 @@ fn mustache_object() {
     );
 }
 
+#[test]
+fn mustache_object_and_array_escape_json_strings() {
+    assert_render_body_eq!(
+        r#"<div>
+            <p>{{ list }}</p>
+            <p>{{ object }}</p>
+        </div>"#,
+        json!({
+            "list": ["a\"b", "c\\d", "line\nbreak", "<tag>"],
+            "object": {
+                "a\"b": "c\\d",
+                "line\nkey": "line\nvalue",
+                "html": "<span>",
+            },
+        }),
+        r#"<div>
+            <p>[ "a\"b", "c\\d", "line\nbreak", "&lt;tag&gt;" ]</p>
+            <p>{ "a\"b": "c\\d", "line\nkey": "line\nvalue", "html": "&lt;span&gt;" }</p>
+        </div>"#,
+    );
+}
+
 // === Data Alias ===
 
 #[test]

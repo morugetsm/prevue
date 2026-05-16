@@ -334,7 +334,7 @@ fn fmt_json(val: &JsonValue) -> String {
         JsonValue::Null => "null".to_string(),
         JsonValue::Bool(b) => b.to_string(),
         JsonValue::Number(n) => n.to_string(),
-        JsonValue::String(s) => format!("\"{}\"", s),
+        JsonValue::String(s) => js_string_literal(s),
         JsonValue::Array(arr) => {
             if arr.is_empty() {
                 "[]".to_string()
@@ -351,7 +351,7 @@ fn fmt_json(val: &JsonValue) -> String {
             } else {
                 let items: Vec<String> = obj
                     .iter()
-                    .map(|(k, v)| format!("\"{}\": {}", k, fmt_json(v)))
+                    .map(|(k, v)| format!("{}: {}", js_string_literal(k), fmt_json(v)))
                     .collect();
                 format!("{{ {} }}", items.join(", "))
             }
