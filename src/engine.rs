@@ -149,55 +149,40 @@ impl Engine {
         let Some(scope_key) = self.scope_keys.last().cloned() else {
             return false;
         };
-        let temp_key = format!("__temp_{}", self.binding_next);
-        self.binding_next += 1;
-
         let slot_array = JsArray::from_iter(slots, &mut self.context);
 
-        if self
-            .context
-            .global_object()
-            .set(
-                JsString::from(temp_key.as_str()),
-                slot_array,
-                false,
-                &mut self.context,
-            )
-            .is_err()
-        {
-            return false;
-        }
-
-        let temp_ref = js_string_literal(&temp_key);
-        let scope_ref = js_string_literal(&scope_key);
-        let copies = binding
-            .locals
-            .iter()
-            .map(|name| {
-                format!(
-                    "globalThis[{scope_ref}][{}] = {};",
-                    js_string_literal(name),
-                    name
-                )
-            })
-            .collect::<String>();
-        let code = format!(
-            "let [{}] = globalThis[{temp_ref}]; {copies}",
-            binding.pattern
-        );
-        let result = self.eval(&code).is_ok();
-
-        let _ = self
-            .context
-            .global_object()
-            .delete_property_or_throw(JsString::from(temp_key), &mut self.context);
-
-        result
+        self.with_temp(slot_array.into(), |engine, temp_ref| {
+            let scope_ref = js_string_literal(&scope_key);
+            let copies = binding
+                .locals
+                .iter()
+                .map(|name| {
+                    format!(
+                        "globalThis[{scope_ref}][{}] = {};",
+                        js_string_literal(name),
+                        name
+                    )
+                })
+                .collect::<String>();
+            let code = format!(
+                "let [{}] = globalThis[{temp_ref}]; {copies}",
+                binding.pattern
+            );
+            engine.eval(&code).map(|_| ())
+        })
+        .is_ok()
     }
 
     pub fn eval_with_temp_val<F>(&mut self, value: JsValue, build_code: F) -> JsResult<JsValue>
     where
         F: FnOnce(&str) -> String,
+    {
+        self.with_temp(value, |engine, temp_ref| engine.eval(&build_code(temp_ref)))
+    }
+
+    fn with_temp<F, T>(&mut self, value: JsValue, f: F) -> JsResult<T>
+    where
+        F: FnOnce(&mut Self, &str) -> JsResult<T>,
     {
         let temp_key = format!("__temp_{}", self.binding_next);
         self.binding_next += 1;
@@ -210,7 +195,7 @@ impl Engine {
         )?;
 
         let temp_ref = js_string_literal(&temp_key);
-        let result = self.eval(&build_code(&temp_ref));
+        let result = f(self, &temp_ref);
 
         let _ = self
             .context
@@ -274,9 +259,17 @@ impl Engine {
 
     pub fn eval_str(&mut self, code: &str) -> Option<String> {
         let value = self.eval_expr(code).ok()?;
+        self.stringify(&value)
+    }
+
+    pub fn eval_fmt(&mut self, code: &str) -> Option<String> {
+        let value = self.eval_expr(code).ok()?;
+        fmt_text(&value, &mut self.context)
+    }
+
+    pub fn stringify(&mut self, value: &JsValue) -> Option<String> {
         match value.variant() {
             JsVariant::Null | JsVariant::Undefined => None,
-            JsVariant::String(val) => Some(val.to_std_string_escaped()),
             _ => Some(
                 value
                     .to_string(&mut self.context)
@@ -284,11 +277,6 @@ impl Engine {
                     .to_std_string_escaped(),
             ),
         }
-    }
-
-    pub fn eval_fmt(&mut self, code: &str) -> Option<String> {
-        let value = self.eval_expr(code).ok()?;
-        fmt_text(&value, &mut self.context)
     }
 
     pub fn eval_bool(&mut self, code: &str) -> Option<bool> {

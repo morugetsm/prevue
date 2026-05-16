@@ -206,22 +206,21 @@ fn process_node_content(handle: &Handle, engine: &mut Engine) -> Result<ContentA
 
                 // v-bind object spread: v-bind="obj" or v-bind="{ key: value }"
                 if name_ref == "v-bind" {
-                    if let Some(json_val) = eval_json(engine, attr.value.as_ref())
-                        && let Some(obj) = json_val.as_object()
+                    if let Ok(bound) = engine.eval_expr(attr.value.as_ref())
+                        && let JsVariant::Object(obj) = bound.variant()
                     {
-                        for (key, val) in obj.iter() {
-                            let value = match key.as_str() {
-                                "class" => normalize_class(val),
-                                "style" => normalize_style(val),
-                                _ if val.is_null() => None,
-                                _ => Some(
-                                    val.as_str()
-                                        .map(str::to_string)
-                                        .unwrap_or_else(|| val.to_string()),
-                                ),
+                        for key in object_keys(engine, bound.clone()) {
+                            let Some(key_string) = key.as_string() else {
+                                continue;
                             };
+                            let key = key_string.to_std_string_escaped();
+                            let value = obj
+                                .get(key_string, &mut engine.context)
+                                .ok()
+                                .and_then(|value| normalize_bound_attribute(engine, &key, &value));
                             if let Some(value) = value {
-                                additions.push((key.clone(), attr.name.clone(), value));
+                                validate_attribute_name(&key)?;
+                                additions.push((key, attr.name.clone(), value));
                             }
                         }
                         removals.push(i);
@@ -242,8 +241,12 @@ fn process_node_content(handle: &Handle, engine: &mut Engine) -> Result<ContentA
                             continue;
                         }
                         let inner = &arg_raw[1..arg_raw.len() - 1];
-                        match (engine.eval_fmt(inner), engine.eval_fmt(value_expr)) {
-                            (Some(resolved), Some(value)) => renames.push((i, resolved, value)),
+                        match (engine.eval_str(inner), engine.eval_str(value_expr)) {
+                            (Some(resolved), Some(_)) if resolved.is_empty() => removals.push(i),
+                            (Some(resolved), Some(value)) => {
+                                validate_attribute_name(&resolved)?;
+                                renames.push((i, resolved, value));
+                            }
                             _ => removals.push(i),
                         }
                     } else {
@@ -253,19 +256,28 @@ fn process_node_content(handle: &Handle, engine: &mut Engine) -> Result<ContentA
                             value_expr
                         };
                         if matches!(arg_raw, "class" | "style") {
-                            let value = eval_json(engine, target).and_then(|val| match arg_raw {
-                                "class" => normalize_class(&val),
-                                "style" => normalize_style(&val),
-                                _ => None,
-                            });
+                            let value = engine
+                                .eval_expr(target)
+                                .ok()
+                                .and_then(|value| value.to_json(&mut engine.context).ok().flatten())
+                                .and_then(|value| {
+                                    if arg_raw == "class" {
+                                        normalize_class(&value)
+                                    } else {
+                                        normalize_style(&value)
+                                    }
+                                });
                             if let Some(value) = value {
                                 additions.push((arg_raw.to_string(), attr.name.clone(), value));
                             }
                             removals.push(i);
                         } else {
-                            match engine.eval_fmt(target) {
-                                Some(value) => renames.push((i, arg_raw.to_string(), value)),
-                                None => removals.push(i),
+                            match engine.eval_str(target) {
+                                Some(value) => {
+                                    validate_attribute_name(arg_raw)?;
+                                    renames.push((i, arg_raw.to_string(), value));
+                                }
+                                _ => removals.push(i),
                             }
                         }
                     }
@@ -374,12 +386,29 @@ fn replace_element_children(handle: &Handle, new_children: Vec<Handle>) {
     *handle.children.borrow_mut() = new_children;
 }
 
-fn eval_json(engine: &mut Engine, code: &str) -> Option<JsonValue> {
-    engine
-        .eval_expr(code)
-        .ok()?
-        .to_json(&mut engine.context)
-        .ok()?
+fn normalize_bound_attribute(engine: &mut Engine, key: &str, value: &JsValue) -> Option<String> {
+    match key {
+        "class" | "style" => {
+            let value = value.to_json(&mut engine.context).ok().flatten()?;
+            if key == "class" {
+                normalize_class(&value)
+            } else {
+                normalize_style(&value)
+            }
+        }
+        _ => engine.stringify(value),
+    }
+}
+
+fn validate_attribute_name(name: &str) -> Result<()> {
+    (!name.is_empty()
+        && name
+            .chars()
+            .all(|ch| !ch.is_ascii_whitespace() && !matches!(ch, '\0' | '>' | '/' | '=')))
+    .then_some(())
+    .ok_or_else(|| Error::InvalidAttributeName {
+        name: name.to_string(),
+    })
 }
 
 fn normalize_class(value: &JsonValue) -> Option<String> {

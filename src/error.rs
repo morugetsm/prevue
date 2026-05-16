@@ -129,6 +129,9 @@ pub enum Error {
         directives = format_directives(directives)
     )]
     ConflictingDirectives { directives: Vec<Directive> },
+
+    #[error("invalid attribute name {name:?}")]
+    InvalidAttributeName { name: String },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

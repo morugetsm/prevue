@@ -58,12 +58,12 @@ fn example_with_less_indent() {
 }
 
 #[test]
-fn html5ever() {
+fn empty_template() {
     assert_render_eq!("", json!({}), "<html><head></head><body></body></html>");
 }
 
 #[test]
-fn attr_case() {
+fn attr_lowercase() {
     assert_render_body_eq!(
         r#"<div>
         <h1 TTT></h1>
