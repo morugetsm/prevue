@@ -84,6 +84,36 @@ fn mustache_string_variants_can_contain_closing_delimiter() {
 }
 
 #[test]
+fn mustache_template_literal_interpolations_can_contain_closing_delimiter() {
+    assert_render_body_eq!(
+        r#"<div>
+            <p>{{ `before ${ "}}" } after` }}</p>
+            <p>{{ `object ${ { value: "}}" }.value } done` }}</p>
+        </div>"#,
+        json!({}),
+        r#"<div>
+            <p>before }} after</p>
+            <p>object }} done</p>
+        </div>"#,
+    );
+}
+
+#[test]
+fn mustache_nested_template_literals_can_contain_closing_delimiter() {
+    assert_render_body_eq!(
+        r#"<div>
+            <p>{{ `outer ${ `inner }}` }` }}</p>
+            <p>{{ `outer ${ `${ "}}" }` }` }}</p>
+        </div>"#,
+        json!({}),
+        r#"<div>
+            <p>outer inner }}</p>
+            <p>outer }}</p>
+        </div>"#,
+    );
+}
+
+#[test]
 fn mustache_comments_can_contain_closing_delimiter() {
     assert_render_body_eq!(
         r#"<div>

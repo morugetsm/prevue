@@ -31,6 +31,7 @@ pub(crate) fn render_text(content: &str, engine: &mut Engine) -> Option<String> 
 enum JsScanState {
     Code,
     String(char),
+    Template,
     Regex { in_class: bool },
     LineComment,
     BlockComment,
@@ -48,6 +49,7 @@ where
     let mut escaped = false;
     let mut can_start_regex = true;
     let mut after_property_dot = false;
+    let mut template_expr_brace_depths: Vec<usize> = Vec::new();
     let mut iter = content[start..].char_indices().peekable();
 
     while let Some((offset, ch)) = iter.next() {
@@ -56,8 +58,14 @@ where
         match state {
             JsScanState::Code => match ch {
                 ch if ch.is_whitespace() => {}
-                '\'' | '"' | '`' => {
+                '\'' | '"' => {
                     state = JsScanState::String(ch);
+                    escaped = false;
+                    can_start_regex = false;
+                    after_property_dot = false;
+                }
+                '`' => {
+                    state = JsScanState::Template;
                     escaped = false;
                     can_start_regex = false;
                     after_property_dot = false;
@@ -76,7 +84,20 @@ where
                     can_start_regex = false;
                     after_property_dot = false;
                 }
-                '<' if should_stop(pos) => return None,
+                '<' if template_expr_brace_depths.is_empty() && should_stop(pos) => return None,
+                '}' if !template_expr_brace_depths.is_empty() => {
+                    let depth = template_expr_brace_depths
+                        .last_mut()
+                        .expect("non-empty template expression stack");
+                    if *depth == 0 {
+                        template_expr_brace_depths.pop();
+                        state = JsScanState::Template;
+                    } else {
+                        *depth -= 1;
+                    }
+                    can_start_regex = false;
+                    after_property_dot = false;
+                }
                 '}' if iter.peek().is_some_and(|(_, next)| *next == '}') => return Some(pos),
                 ch if is_js_identifier_start(ch) => {
                     let mut end = pos + ch.len_utf8();
@@ -111,6 +132,11 @@ where
                     after_property_dot = false;
                 }
                 '(' | '[' | '{' | ',' | ';' | ':' | '?' => {
+                    if ch == '{'
+                        && let Some(depth) = template_expr_brace_depths.last_mut()
+                    {
+                        *depth += 1;
+                    }
                     can_start_regex = true;
                     after_property_dot = false;
                 }
@@ -133,6 +159,23 @@ where
                     escaped = true;
                 } else if ch == quote {
                     state = JsScanState::Code;
+                }
+            }
+            JsScanState::Template => {
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == '`' {
+                    state = JsScanState::Code;
+                    can_start_regex = false;
+                    after_property_dot = false;
+                } else if ch == '$' && iter.peek().is_some_and(|(_, next)| *next == '{') {
+                    iter.next();
+                    template_expr_brace_depths.push(0);
+                    state = JsScanState::Code;
+                    can_start_regex = true;
+                    after_property_dot = false;
                 }
             }
             JsScanState::Regex { in_class } => {
