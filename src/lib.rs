@@ -52,9 +52,13 @@ pub fn render(template: impl AsRef<str>, data: impl Serialize) -> Result<String>
         &SerializableHandle::from(Rc::clone(&dom.document)),
         Default::default(),
     )
-    .map_err(|source| Error::SerializeHtml { source })?;
+    .map_err(|source| Error::RenderOutput {
+        message: format!("failed to serialize HTML: {source}"),
+    })?;
 
-    let rendered = String::from_utf8(buffer).map_err(|source| Error::OutputUtf8 { source })?;
+    let rendered = String::from_utf8(buffer).map_err(|source| Error::RenderOutput {
+        message: format!("failed to convert rendered HTML to UTF-8: {source}"),
+    })?;
     Ok(rendered)
 }
 
@@ -757,8 +761,8 @@ fn process_for(node: &Handle, engine: &mut Engine, expr: &str) -> Result<Vec<Han
     let indent_opt = get_indent(node);
     let mut result_nodes = Vec::new();
     let mut render_iteration = |engine: &mut Engine, slots: Vec<JsValue>| -> Result<()> {
-        engine.enter_scope().map_err(|err| Error::Scope {
-            message: err.to_string(),
+        engine.enter_scope().map_err(|err| Error::Internal {
+            message: format!("failed to manage JavaScript scope: {err}"),
         })?;
 
         let result = if engine.bind_for_slots(&expression.binding, slots) {

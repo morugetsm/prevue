@@ -37,18 +37,18 @@ impl Engine {
             binding_next: 0,
         };
 
-        engine.enter_scope().map_err(|err| Error::Scope {
-            message: err.to_string(),
+        engine.enter_scope().map_err(|err| Error::Internal {
+            message: format!("failed to manage JavaScript scope: {err}"),
         })?;
 
         let json = serde_json::to_value(data).map_err(|source| Error::DataSerialize { source })?;
         let inject = |engine: &mut Self, key: &str, value: &JsonValue, field: Option<String>| {
             let val =
-                JsValue::from_json(value, &mut engine.context).map_err(|err| Error::DataToJs {
+                JsValue::from_json(value, &mut engine.context).map_err(|err| Error::DataInit {
                     field: field.clone(),
                     message: err.to_string(),
                 })?;
-            engine.set_val(key, val).map_err(|err| Error::DataInject {
+            engine.set_val(key, val).map_err(|err| Error::DataInit {
                 field,
                 message: err.to_string(),
             })

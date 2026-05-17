@@ -276,7 +276,7 @@ fn bind_arg_js_stringify() {
 // === Class / Style Normalization ===
 
 #[test]
-fn bind_class_merges_static_and_object() {
+fn bind_class_static_object() {
     assert_render_body_eq!(
         r#"<div>
         <p class="base" :class="{ active: true, hidden: false, titled: id }">elem</p>
@@ -321,7 +321,7 @@ fn bind_spread_class() {
 }
 
 #[test]
-fn bind_style_merges_static_and_object() {
+fn bind_style_static_object() {
     assert_render_body_eq!(
         r#"<div>
         <p style="color: red" :style="{ fontSize: '12px', 'line-height': 1.5, '--gap': '4px', display: null }">elem</p>
@@ -382,7 +382,7 @@ fn bind_dynamic_empty_name() {
 }
 
 #[test]
-fn bind_dynamic_one_space_error() {
+fn bind_dynamic_single_space() {
     let err = render(
         r#"<div>
         <p :[name]="value">elem</p>
@@ -478,7 +478,7 @@ fn bind_dynamic_lt_in_name() {
 }
 
 #[test]
-fn bind_dynamic_gt_name_error() {
+fn bind_dynamic_gt_error() {
     let err = render(
         r#"<div>
         <p :[name]="value">elem</p>
@@ -494,7 +494,7 @@ fn bind_dynamic_gt_name_error() {
 }
 
 #[test]
-fn bind_dynamic_gt_in_name_error() {
+fn bind_dynamic_gt_in_name() {
     let err = render(
         r#"<div>
         <p :[name]="value">elem</p>
@@ -527,7 +527,7 @@ fn bind_spread_empty_name() {
 }
 
 #[test]
-fn bind_spread_one_space_error() {
+fn bind_spread_single_space() {
     let err = render(
         r#"<div>
         <span v-bind="attrs">elem</span>
@@ -629,7 +629,7 @@ fn bind_spread_lt_in_name() {
 }
 
 #[test]
-fn bind_spread_gt_name_error() {
+fn bind_spread_gt_error() {
     let err = render(
         r#"<div>
         <span v-bind="attrs">elem</span>
@@ -646,7 +646,7 @@ fn bind_spread_gt_name_error() {
 }
 
 #[test]
-fn bind_spread_gt_in_name_error() {
+fn bind_spread_gt_in_name() {
     let err = render(
         r#"<div>
         <span v-bind="attrs">elem</span>

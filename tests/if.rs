@@ -84,7 +84,7 @@ fn if_expression() {
 // === Same-Element Directives ===
 
 #[test]
-fn if_with_else_on_same_element() {
+fn if_else_same_element() {
     let input = r#"
     <div>
         <div v-if="true" v-else>first</div>
@@ -97,7 +97,7 @@ fn if_with_else_on_same_element() {
 }
 
 #[test]
-fn if_with_else_if_on_same_element() {
+fn if_else_if_same_element() {
     let input = r#"
     <div>
         <div v-if="true" v-else-if="false">first</div>
@@ -126,7 +126,7 @@ fn if_empty_expression_error() {
 // === Priority over v-for ===
 
 #[test]
-fn if_takes_priority_over_for() {
+fn if_priority_over_for() {
     assert_render_body_eq!(
         r#"<div>
         <div v-if="true" v-for="item in list">IF</div>

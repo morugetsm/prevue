@@ -139,7 +139,7 @@ fn template_for_element_linebreak() {
 }
 
 #[test]
-fn template_for_element_linebreak_with_less_indent() {
+fn template_linebreak_less_indent() {
     assert_render_body_eq!(
         r#"<div>
     <template v-for="item in list">
@@ -164,7 +164,7 @@ fn template_for_element_linebreak_with_less_indent() {
 }
 
 #[test]
-fn template_expansion_preserves_pre_text_indentation() {
+fn template_pre_text_indent() {
     assert_render_body_eq!(
         r#"<div>
         <template v-if="true">
@@ -182,7 +182,7 @@ fn template_expansion_preserves_pre_text_indentation() {
 }
 
 #[test]
-fn template_expansion_preserves_v_pre_subtree_indentation() {
+fn template_v_pre_subtree_indent() {
     assert_render_body_eq!(
         r#"<div>
         <template v-if="true">
@@ -232,7 +232,7 @@ fn template_for_complex() {
 }
 
 #[test]
-fn template_for_object_with_key_index() {
+fn template_for_key_index() {
     assert_render_body_eq!(
         r#"<div>
         <template v-for="val, key, idx in { a: 1, b: 2 }">
@@ -248,7 +248,7 @@ fn template_for_object_with_key_index() {
 }
 
 #[test]
-fn template_for_with_inner_if() {
+fn template_for_inner_if() {
     assert_render_body_eq!(
         r#"<div>
         <template v-for="n in [1, 2, 3]">
@@ -266,7 +266,7 @@ fn template_for_with_inner_if() {
 }
 
 #[test]
-fn template_for_trims_whitespace_children() {
+fn template_for_trims_whitespace() {
     assert_render_body_eq!(
         r#"<div>
         <template v-for="i in [1,2]">
@@ -335,7 +335,7 @@ fn template_pre_with_if() {
 // === Attributes ===
 
 #[test]
-fn template_no_directive_with_attrs() {
+fn template_attrs_no_directive() {
     assert_render_body_eq!(
         r#"<div>
         <template data-x="y">IGNORED</template>

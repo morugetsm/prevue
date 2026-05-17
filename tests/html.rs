@@ -64,7 +64,7 @@ fn html_inserted_mustache_is_inert() {
 }
 
 #[test]
-fn html_inserted_directives_and_scripts_are_inert() {
+fn html_inserted_directives_inert() {
     assert_render_body_eq!(
         r#"<div>
         <div v-html="with_directives"></div>
@@ -147,7 +147,7 @@ fn html_for_uses_loop_scope() {
 }
 
 #[test]
-fn html_inside_pre_is_preserved() {
+fn html_inside_pre_preserved() {
     assert_render_body_eq!(
         r#"<div v-pre>
         <p v-html="html">{{ name }}</p>
@@ -160,7 +160,7 @@ fn html_inside_pre_is_preserved() {
 }
 
 #[test]
-fn html_if_false_does_not_eval() {
+fn html_if_false_inert() {
     assert_render_eq!(
         r#"<script type="prevue">
         var count = 0;

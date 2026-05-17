@@ -66,7 +66,7 @@ fn pre_multiline() {
 }
 
 #[test]
-fn pre_with_html_like_mustache_string() {
+fn pre_html_like_mustache() {
     assert_render_body_eq!(
         r#"<div>
         <div v-pre>{{ '<br />' }}</div>

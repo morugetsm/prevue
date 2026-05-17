@@ -73,7 +73,7 @@ fn for_sparse_array_uses_length() {
 }
 
 #[test]
-fn for_empty_slots_array_uses_length() {
+fn for_empty_slots_length() {
     assert_render_body_eq!(
         r#"<div>
         <div v-for="item, index in Array(3)">{{ `${index}:${item}` }}</div>
@@ -138,7 +138,7 @@ fn for_object_destructuring_alias() {
 }
 
 #[test]
-fn for_object_destructuring_nested_default_rest() {
+fn for_nested_default_rest() {
     assert_render_body_eq!(
         r#"<div>
         <p v-for="{ foo: label, nested: { count = 0 }, ...rest } in items">
@@ -309,7 +309,7 @@ fn for_object_destructuring_key_index() {
 }
 
 #[test]
-fn for_object_uses_enumerable_string_keys() {
+fn for_enumerable_keys() {
     assert_render_body_eq!(
         r#"<div>
         <p v-for="value, key in let obj = { visible: 'yes' }; Object.defineProperty(obj, 'hidden', { value: 'no', enumerable: false }); obj">{{ `${key}:${value}` }}</p>

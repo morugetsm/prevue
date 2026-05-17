@@ -31,7 +31,7 @@ fn text_self_closing() {
 }
 
 #[test]
-fn text_self_closing_with_explicit_close() {
+fn text_self_closing_explicit() {
     assert_render_body_eq!(
         r#"<div>
         <p v-text="str" /></p>
@@ -59,7 +59,7 @@ fn text_overrides_inner_content() {
 }
 
 #[test]
-fn text_overrides_compact_inner_content() {
+fn text_overrides_compact() {
     assert_render_body_eq!(
         r#"<div><p v-text="str">fallback</p></div>"#,
         json!({ "str": "Hello, world!" }),
@@ -81,7 +81,7 @@ fn text_overrides_mustache() {
 }
 
 #[test]
-fn text_self_closing_overrides_inner_text() {
+fn text_self_closing_text() {
     assert_render_body_eq!(
         r#"<div>
         <p v-text="str" />Hello</p>
@@ -94,7 +94,7 @@ fn text_self_closing_overrides_inner_text() {
 }
 
 #[test]
-fn text_self_closing_overrides_mustache() {
+fn text_self_closing_mustache() {
     assert_render_body_eq!(
         r#"<div>
         <p v-text="str" />{{ true }}</p>

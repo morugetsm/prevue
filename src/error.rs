@@ -1,12 +1,19 @@
 use std::fmt;
 
+/// A Vue-style template directive recognized by `prevue`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Directive {
+    /// `v-if`
     If,
+    /// `v-else-if`
     ElseIf,
+    /// `v-else`
     Else,
+    /// `v-for`
     For,
+    /// `v-text`
     Text,
+    /// `v-html`
     Html,
 }
 
@@ -23,11 +30,16 @@ impl fmt::Display for Directive {
     }
 }
 
+/// The reason a directive failed validation before rendering.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DirectiveErrorKind {
+    /// The directive requires an expression, but the attribute value was empty.
     MissingExpression,
+    /// The directive does not accept an expression, but one was provided.
     UnexpectedExpression,
+    /// `v-else-if` or `v-else` was not adjacent to a preceding conditional branch.
     MissingAdjacentConditional,
+    /// The directive expression could not be parsed as valid directive syntax.
     InvalidExpression,
 }
 
@@ -64,74 +76,96 @@ fn format_directives(directives: &[Directive]) -> String {
         .join(", ")
 }
 
+/// Errors returned while rendering a template.
+///
+/// Each variant describes the operation that failed, such as preparing caller
+/// data, parsing a template, applying directives, installing render data,
+/// running setup code, or writing the final HTML.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("failed to parse template: {source}")]
-    ParseTemplate {
-        #[source]
-        source: std::io::Error,
-    },
-
-    #[error("failed to serialize HTML: {source}")]
-    SerializeHtml {
-        #[source]
-        source: std::io::Error,
-    },
-
-    #[error("failed to convert rendered HTML to UTF-8: {source}")]
-    OutputUtf8 {
-        #[source]
-        source: std::string::FromUtf8Error,
-    },
-
+    /// Render data could not be serialized to JSON.
     #[error("failed to serialize render data: {source}")]
     DataSerialize {
+        /// The serialization error reported by `serde_json`.
         #[source]
         source: serde_json::Error,
     },
 
-    #[error(
-        "failed to convert render data{field} to JavaScript: {message}",
-        field = format_field(field)
-    )]
-    DataToJs {
-        field: Option<String>,
+    /// The template could not be parsed.
+    #[error("failed to parse template: {source}")]
+    TemplateParse {
+        /// The parse error reported by the HTML parser.
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// The rendered document could not be written as final HTML output.
+    #[error("failed to render HTML output: {message}")]
+    RenderOutput {
+        /// The output serialization or UTF-8 conversion failure.
         message: String,
     },
 
-    #[error(
-        "failed to inject render data{field}: {message}",
-        field = format_field(field)
-    )]
-    DataInject {
-        field: Option<String>,
-        message: String,
-    },
-
-    #[error("failed to manage JavaScript scope: {message}")]
-    Scope { message: String },
-
-    #[error("failed to execute <script type=\"prevue\">: {message}")]
-    SetupScript { message: String },
-
+    /// A directive was malformed or appeared in an invalid position during traversal.
     #[error(
         "invalid {directive}: {kind}{expression}",
         expression = format_expression(expression)
     )]
     InvalidDirective {
+        /// The directive that failed validation.
         directive: Directive,
+        /// The validation failure kind.
         kind: DirectiveErrorKind,
+        /// The directive expression, when one was present.
         expression: Option<String>,
     },
 
+    /// Multiple directives were used together where only one can apply.
     #[error(
         "conflicting directives: {directives}",
         directives = format_directives(directives)
     )]
-    ConflictingDirectives { directives: Vec<Directive> },
+    ConflictingDirectives {
+        /// The conflicting directives found on the same element.
+        directives: Vec<Directive>,
+    },
 
+    /// A dynamic `v-bind` result produced an invalid HTML attribute name.
     #[error("invalid attribute name {name:?}")]
-    InvalidAttributeName { name: String },
+    InvalidAttributeName {
+        /// The invalid attribute name.
+        name: String,
+    },
+
+    /// Render data could not be installed into the JavaScript scope.
+    ///
+    /// `field` is `None` when initializing the root data alias `$`, and
+    /// `Some(name)` when initializing a top-level data field.
+    #[error(
+        "failed to initialize render data{field}: {message}",
+        field = format_field(field)
+    )]
+    DataInit {
+        /// The data field being initialized, or `None` for the root alias `$`.
+        field: Option<String>,
+        /// The JavaScript engine error message.
+        message: String,
+    },
+
+    /// A `<script type="prevue">` block failed to parse or execute.
+    #[error("failed to execute <script type=\"prevue\">: {message}")]
+    SetupScript {
+        /// The JavaScript engine error message.
+        message: String,
+    },
+
+    /// An unexpected failure occurred while managing render state.
+    #[error("internal error: {message}")]
+    Internal {
+        /// The internal failure description.
+        message: String,
+    },
 }
 
+/// A `Result` alias using [`Error`] as the error type.
 pub type Result<T> = std::result::Result<T, Error>;

@@ -59,7 +59,7 @@ fn else_if_basic() {
 }
 
 #[test]
-fn else_if_empty_string_literal_is_falsy() {
+fn else_if_empty_string_falsy() {
     assert_render_body_eq!(
         r#"<div>
         <div v-if="false">IF</div>
@@ -190,14 +190,14 @@ fn multiple_chains_adjacent() {
 // === Malformed Chains ===
 
 #[test]
-fn standalone_else_and_else_if() {
-    let else_input = r#"
+fn standalone_else() {
+    let input = r#"
     <div>
         <div>Normal</div>
         <div v-else>ELSE</div>
     </div>
     "#;
-    let err = render(else_input, json!({})).unwrap_err();
+    let err = render(input, json!({})).unwrap_err();
     assert!(matches!(
         err,
         Error::InvalidDirective {
@@ -206,14 +206,17 @@ fn standalone_else_and_else_if() {
             expression: None
         }
     ));
+}
 
-    let else_if_input = r#"
+#[test]
+fn standalone_else_if() {
+    let input = r#"
     <div>
         <div>Normal</div>
         <div v-else-if="false">ELSE-IF</div>
     </div>
     "#;
-    let err = render(else_if_input, json!({})).unwrap_err();
+    let err = render(input, json!({})).unwrap_err();
     assert!(
         matches!(err, Error::InvalidDirective { directive: Directive::ElseIf, kind: DirectiveErrorKind::MissingAdjacentConditional, expression: Some(expr) }
             if expr == "false")
@@ -237,7 +240,7 @@ fn else_if_after_else() {
 }
 
 #[test]
-fn else_if_empty_expression_error() {
+fn else_if_empty_expression() {
     let input = r#"
     <div>
         <div v-if="false">IF</div>
@@ -267,7 +270,7 @@ fn else_with_expression_error() {
 }
 
 #[test]
-fn else_chain_allows_whitespace_and_comments() {
+fn else_allows_whitespace_comments() {
     assert_render_body_eq!(
         r#"<div>
         <div v-if="false">IF</div>
@@ -283,7 +286,7 @@ fn else_chain_allows_whitespace_and_comments() {
 }
 
 #[test]
-fn else_chain_rejects_non_whitespace_text_between_branches() {
+fn else_rejects_text_between_branches() {
     let input = r#"
     <div>
         <div v-if="false">IF</div>
@@ -303,7 +306,7 @@ fn else_chain_rejects_non_whitespace_text_between_branches() {
 }
 
 #[test]
-fn else_inside_pre_is_preserved() {
+fn else_inside_pre_preserved() {
     assert_render_body_eq!(
         r#"<div v-pre>
         <p v-else>ELSE</p>
@@ -318,7 +321,7 @@ fn else_inside_pre_is_preserved() {
 }
 
 #[test]
-fn else_inside_skipped_structural_branch_is_not_validated() {
+fn else_skipped_branch_ignored() {
     assert_render_body_eq!(
         r#"<div>
         <template v-if="false">
@@ -332,7 +335,7 @@ fn else_inside_skipped_structural_branch_is_not_validated() {
 }
 
 #[test]
-fn else_inside_rendered_structural_branch_is_validated() {
+fn else_rendered_branch_validated() {
     let input = r#"
     <div>
         <template v-if="true">
@@ -352,7 +355,7 @@ fn else_inside_rendered_structural_branch_is_validated() {
 }
 
 #[test]
-fn else_chain_inside_rendered_structural_branch() {
+fn else_chain_rendered_branch() {
     assert_render_body_eq!(
         r#"<div>
         <template v-if="true">

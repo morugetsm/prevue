@@ -14,7 +14,7 @@ pub(crate) fn parse(template: &str) -> Result<RcDom> {
     let dom = parse_document(RcDom::default(), ParseOpts::default())
         .from_utf8()
         .read_from(&mut template.as_bytes())
-        .map_err(|source| Error::ParseTemplate { source })?;
+        .map_err(|source| Error::TemplateParse { source })?;
     restore_masked_mustaches(&dom.document, &mustache_mask);
     Ok(dom)
 }

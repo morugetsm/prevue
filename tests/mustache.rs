@@ -48,7 +48,7 @@ fn mustache_multiline() {
 }
 
 #[test]
-fn mustache_string_can_contain_closing_delimiter() {
+fn mustache_string_closing_delimiter() {
     assert_render_body_eq!(
         r#"<div>
             {{ "}}" }}
@@ -61,7 +61,7 @@ fn mustache_string_can_contain_closing_delimiter() {
 }
 
 #[test]
-fn mustache_string_variants_can_contain_closing_delimiter() {
+fn mustache_string_variants_delimiter() {
     assert_render_body_eq!(
         r#"<div>
             <p>{{ "{{" }}</p>
@@ -84,7 +84,7 @@ fn mustache_string_variants_can_contain_closing_delimiter() {
 }
 
 #[test]
-fn mustache_template_literal_interpolations_can_contain_closing_delimiter() {
+fn mustache_template_interpolation_delimiter() {
     assert_render_body_eq!(
         r#"<div>
             <p>{{ `before ${ "}}" } after` }}</p>
@@ -99,7 +99,7 @@ fn mustache_template_literal_interpolations_can_contain_closing_delimiter() {
 }
 
 #[test]
-fn mustache_nested_template_literals_can_contain_closing_delimiter() {
+fn mustache_nested_template_delimiter() {
     assert_render_body_eq!(
         r#"<div>
             <p>{{ `outer ${ `inner }}` }` }}</p>
@@ -114,7 +114,7 @@ fn mustache_nested_template_literals_can_contain_closing_delimiter() {
 }
 
 #[test]
-fn mustache_comments_can_contain_closing_delimiter() {
+fn mustache_comments_closing_delimiter() {
     assert_render_body_eq!(
         r#"<div>
             <p>{{
@@ -132,7 +132,7 @@ fn mustache_comments_can_contain_closing_delimiter() {
 }
 
 #[test]
-fn mustache_comments_can_contain_opening_delimiter() {
+fn mustache_comments_opening_delimiter() {
     assert_render_body_eq!(
         r#"<div>
             <p>{{
@@ -151,7 +151,7 @@ fn mustache_comments_can_contain_opening_delimiter() {
 }
 
 #[test]
-fn mustache_regex_literals_can_contain_closing_delimiter() {
+fn mustache_regex_closing_delimiter() {
     assert_render_body_eq!(
         r#"<div>
             <p>{{ /}}/.test("}}") }}</p>
@@ -172,7 +172,7 @@ fn mustache_regex_literals_can_contain_closing_delimiter() {
 }
 
 #[test]
-fn mustache_regex_literals_can_start_after_expression_boundaries() {
+fn mustache_regex_after_expr_boundary() {
     assert_render_body_eq!(
         r#"<div>
             <p>{{ true ? /}}/.test("}}") : false }}</p>
@@ -189,7 +189,7 @@ fn mustache_regex_literals_can_start_after_expression_boundaries() {
 }
 
 #[test]
-fn mustache_division_still_works_with_regex_scanner() {
+fn mustache_division_regex_scanner() {
     assert_render_body_eq!(
         r#"<div>
             <p>{{ total / count }}</p>
@@ -214,7 +214,7 @@ fn mustache_division_still_works_with_regex_scanner() {
 }
 
 #[test]
-fn mustache_html_like_string_is_rendered_as_text() {
+fn mustache_html_string_text() {
     assert_render_body_eq!(
         r#"<div>{{ content.split('\n').join('<br />') }}</div>"#,
         json!({ "content": "first\nsecond" }),
@@ -223,7 +223,7 @@ fn mustache_html_like_string_is_rendered_as_text() {
 }
 
 #[test]
-fn mustache_html_like_literal_is_rendered_as_text() {
+fn mustache_html_literal_text() {
     assert_render_body_eq!(
         r#"<div>{{ '<span>text</span>' }}</div>"#,
         json!({}),
@@ -232,7 +232,7 @@ fn mustache_html_like_literal_is_rendered_as_text() {
 }
 
 #[test]
-fn mustache_html_like_literal_with_multiple_interpolations() {
+fn mustache_html_literal_interpolations() {
     assert_render_body_eq!(
         r#"<div>{{ '<span>text</span>' }} and {{ 2 + 2 }}</div>"#,
         json!({}),
@@ -241,7 +241,7 @@ fn mustache_html_like_literal_with_multiple_interpolations() {
 }
 
 #[test]
-fn mustache_in_static_attribute_is_not_interpolated() {
+fn mustache_static_attr_not_interpolated() {
     assert_render_body_eq!(
         r#"<div title="{{ '<br />' }}">{{ 1 + 1 }}</div>"#,
         json!({}),
@@ -250,7 +250,7 @@ fn mustache_in_static_attribute_is_not_interpolated() {
 }
 
 #[test]
-fn html_like_static_attribute_value_is_preserved() {
+fn html_static_attr_preserved() {
     assert_render_body_eq!(
         r#"<div data-html="<br />">{{ 1 + 1 }}</div>"#,
         json!({}),
@@ -328,7 +328,7 @@ fn mustache_object() {
 }
 
 #[test]
-fn mustache_object_and_array_escape_json_strings() {
+fn mustache_json_string_escaping() {
     assert_render_body_eq!(
         r#"<div>
             <p>{{ list }}</p>

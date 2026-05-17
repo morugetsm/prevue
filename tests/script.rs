@@ -27,7 +27,7 @@ fn script_function_in_mustache() {
 }
 
 #[test]
-fn script_const_arrow_function_in_if() {
+fn script_arrow_in_if() {
     assert_render_eq!(
         r#"
     <script type="prevue">
@@ -49,7 +49,7 @@ fn script_const_arrow_function_in_if() {
 }
 
 #[test]
-fn script_helpers_in_for_and_bind() {
+fn script_helpers_for_bind() {
     assert_render_eq!(
         r#"
     <script type="prevue">
@@ -98,7 +98,7 @@ fn script_execution_order() {
 }
 
 #[test]
-fn script_helpers_are_not_available_before_execution() {
+fn script_helpers_unavailable_before_exec() {
     assert_render_eq!(
         r#"
     <p>{{ helper() }}</p>
@@ -115,7 +115,7 @@ fn script_helpers_are_not_available_before_execution() {
 }
 
 #[test]
-fn script_var_and_class_declarations() {
+fn script_var_class_declarations() {
     assert_render_eq!(
         r#"
     <script type="prevue">
@@ -141,7 +141,7 @@ fn script_var_and_class_declarations() {
 // === Inert Script & Style ===
 
 #[test]
-fn regular_script_is_preserved_and_not_executed() {
+fn regular_script_not_executed() {
     assert_render_eq!(
         r#"
     <script>
@@ -159,7 +159,7 @@ fn regular_script_is_preserved_and_not_executed() {
 }
 
 #[test]
-fn regular_script_and_style_mustache_are_inert() {
+fn regular_script_style_inert() {
     let input = r#"
     <script>
         const template = "{{ '<br />' }}";
@@ -179,7 +179,7 @@ fn regular_script_and_style_mustache_are_inert() {
 // === v-pre & Template Boundaries ===
 
 #[test]
-fn script_inside_pre_is_preserved_and_not_executed() {
+fn script_inside_pre_inert() {
     assert_render_eq!(
         r#"
     <div v-pre>
@@ -201,7 +201,7 @@ fn script_inside_pre_is_preserved_and_not_executed() {
 }
 
 #[test]
-fn script_with_pre_is_preserved_and_not_executed() {
+fn script_with_pre_inert() {
     assert_render_eq!(
         r#"
     <script type="prevue" v-pre>
@@ -219,7 +219,7 @@ fn script_with_pre_is_preserved_and_not_executed() {
 }
 
 #[test]
-fn script_inside_plain_template_is_inert() {
+fn script_plain_template_inert() {
     assert_render_eq!(
         r#"
     <template>
@@ -239,7 +239,7 @@ fn script_inside_plain_template_is_inert() {
 // === Structural Directives ===
 
 #[test]
-fn script_if_false_does_not_execute() {
+fn script_if_false_inert() {
     assert_render_eq!(
         r#"
     <script type="prevue" v-if="false">
@@ -255,7 +255,7 @@ fn script_if_false_does_not_execute() {
 }
 
 #[test]
-fn script_if_true_executes_and_is_removed() {
+fn script_if_true_removed() {
     assert_render_eq!(
         r#"
     <script type="prevue" v-if="true">
@@ -271,7 +271,7 @@ fn script_if_true_executes_and_is_removed() {
 }
 
 #[test]
-fn script_for_executes_in_iteration_scope() {
+fn script_for_iteration_scope() {
     assert_render_eq!(
         r#"
     <script type="prevue">
@@ -290,7 +290,7 @@ fn script_for_executes_in_iteration_scope() {
 }
 
 #[test]
-fn script_inside_structural_template_executes_when_reached() {
+fn script_structural_template_executes() {
     assert_render_eq!(
         r#"
     <template v-if="ready">
@@ -308,7 +308,7 @@ fn script_inside_structural_template_executes_when_reached() {
 }
 
 #[test]
-fn script_inside_skipped_structural_template_does_not_execute() {
+fn script_skipped_template_inert() {
     assert_render_eq!(
         r#"
     <template v-if="ready">
@@ -328,7 +328,7 @@ fn script_inside_skipped_structural_template_does_not_execute() {
 // === Data Alias ===
 
 #[test]
-fn script_can_access_data_alias() {
+fn script_data_alias_access() {
     assert_render_eq!(
         r#"
     <script type="prevue">
@@ -346,7 +346,7 @@ fn script_can_access_data_alias() {
 // === Errors ===
 
 #[test]
-fn script_syntax_error_returns_error() {
+fn script_syntax_error() {
     let input = r#"
     <script type="prevue">
         const =
@@ -358,7 +358,7 @@ fn script_syntax_error_returns_error() {
 }
 
 #[test]
-fn script_runtime_error_returns_error() {
+fn script_runtime_error() {
     let input = r#"
     <script type="prevue">
         throw new Error('boom');
@@ -370,7 +370,7 @@ fn script_runtime_error_returns_error() {
 }
 
 #[test]
-fn script_orphan_else_errors_before_execution() {
+fn script_orphan_else_before_exec() {
     let input = r#"
     <script type="prevue" v-else>
         const helper = () => 'should not run';
