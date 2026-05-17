@@ -62,8 +62,6 @@ fn main() -> prevue::Result<()> {
 | Syntax | Status | Notes |
 |---|---|---|
 | `{{ }}` | ✅ | Text interpolation |
-| `<template>` | ✅ | Structural wrapper |
-| `<script type="prevue">` | ✅ | Render-order setup script |
 | `v-bind`, `:attr` | ✅ | Attribute binding |
 | `v-if` | ✅ | Conditional rendering |
 | `v-else`, `v-else-if` | ✅ | Conditional branches |
@@ -71,6 +69,8 @@ fn main() -> prevue::Result<()> {
 | `v-text` | ✅ | Text replacement |
 | `v-html` | ✅ | Raw HTML replacement; inserted HTML is not compiled |
 | `v-pre` | ✅ | Skip rendering logic |
+| `<template>` | ✅ | Structural wrapper |
+| `<script type="prevue">` | ✅ | Render-order setup script |
 
 
 ## Behavior Notes
