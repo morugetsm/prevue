@@ -93,7 +93,8 @@ pub(crate) fn replace_element_children(handle: &Handle, new_children: Vec<Handle
     *handle.children.borrow_mut() = new_children;
 }
 
-// Replace node with new_nodes in its parent's children
+// An empty `new_nodes` also takes the whitespace that indented the node, so the
+// surrounding lines keep their shape.
 pub(crate) fn replace_node_in_parent(node: &Handle, new_nodes: &[Handle]) {
     let Some(node_parent_weak) = node.parent.take() else {
         return;
@@ -108,7 +109,6 @@ pub(crate) fn replace_node_in_parent(node: &Handle, new_nodes: &[Handle]) {
         return;
     };
 
-    // Check if previous sibling is whitespace indent
     let has_indent_before = pos > 0 && {
         if let NodeData::Text { contents } = &children[pos - 1].data {
             let text = contents.borrow();
@@ -145,7 +145,6 @@ pub(crate) fn replace_node_in_parent(node: &Handle, new_nodes: &[Handle]) {
             children.remove(pos);
         }
     } else {
-        // Replacing node with new nodes
         children.remove(pos);
         for (i, new_node) in new_nodes.iter().enumerate() {
             new_node.parent.set(Some(Weak::clone(&node_parent_weak)));

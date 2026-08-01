@@ -85,6 +85,28 @@ when you need a clean realm.
 `Renderer` is not `Send`; use one per thread.
 
 
+## Precompiled templates
+
+The HTML is still parsed on every call above, and parsing is most of the cost of
+a small render. `Template` parses once:
+
+```rust
+use prevue::{Renderer, Template};
+use serde_json::json;
+
+let mut renderer = Renderer::new()?;
+let template = Template::new("<p>{{ name }}</p>");
+
+for name in ["Ada", "Grace"] {
+    println!("{}", renderer.render_template(&template, json!({ "name": name }))?);
+}
+```
+
+That is roughly twice as fast; loop-heavy templates gain little, since
+evaluation dominates them instead. `Template` is not `Send` either, but cloning
+one is cheap.
+
+
 ## Features
 
 | Syntax | Status | Notes |

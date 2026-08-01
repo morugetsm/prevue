@@ -14,9 +14,9 @@ mod interpolation;
 mod template;
 use attr_value::{AttrEdits, normalize_bound_attribute, validate_attribute_name};
 use dom::{
-    create_text_node, expand_targets, is_element, is_inert_template, is_non_whitespace_text_node,
-    is_raw_text_element, is_whitespace_text_node, parse_html_fragment, replace_element_children,
-    replace_node_in_parent, take_attribute, text_content,
+    clone_node, create_text_node, expand_targets, is_element, is_inert_template,
+    is_non_whitespace_text_node, is_raw_text_element, is_whitespace_text_node, parse_html_fragment,
+    replace_element_children, replace_node_in_parent, take_attribute, text_content,
 };
 use engine::{Engine, ForBinding};
 pub use error::{Directive, DirectiveErrorKind, Error, Result};
@@ -61,7 +61,8 @@ impl IfChain {
 /// Building that context is the dominant cost of a small render, so reusing one
 /// `Renderer` is several times faster than calling [`render`] repeatedly.
 /// Compiled template expressions are cached on it too, so re-rendering the same
-/// template never re-parses them.
+/// template never re-parses them. The HTML itself is still parsed per call —
+/// pair the renderer with a [`Template`] to skip that as well.
 ///
 /// The context is shared, which has two consequences worth knowing:
 ///
@@ -99,16 +100,27 @@ impl Renderer {
         })
     }
 
-    /// Render `template` with `data`, replacing the data from any prior render.
-    pub fn render(&mut self, template: impl AsRef<str>, data: impl Serialize) -> Result<String> {
-        let mut buffer = Vec::new();
-        let dom = template::parse(template.as_ref())?;
-        self.engine.install_data(data)?;
-        traverse(&dom.document, &mut self.engine)?;
+    /// Render `source` with `data`, replacing the data from any prior render.
+    pub fn render(&mut self, source: impl AsRef<str>, data: impl Serialize) -> Result<String> {
+        let dom = template::parse(source.as_ref());
+        self.render_document(&dom.document, data)
+    }
 
+    /// Render an already parsed [`Template`], skipping the parse this time.
+    pub fn render_template(&mut self, template: &Template, data: impl Serialize) -> Result<String> {
+        // Rendering rewrites the tree, so it works on a copy.
+        let document = clone_node(&template.document);
+        self.render_document(&document, data)
+    }
+
+    fn render_document(&mut self, document: &Handle, data: impl Serialize) -> Result<String> {
+        self.engine.install_data(data)?;
+        traverse(document, &mut self.engine)?;
+
+        let mut buffer = Vec::new();
         serialize(
             &mut buffer,
-            &SerializableHandle::from(Rc::clone(&dom.document)),
+            &SerializableHandle::from(Rc::clone(document)),
             Default::default(),
         )
         .map_err(|source| Error::RenderOutput {
@@ -118,6 +130,50 @@ impl Renderer {
         String::from_utf8(buffer).map_err(|source| Error::RenderOutput {
             message: format!("failed to convert rendered HTML to UTF-8: {source}"),
         })
+    }
+}
+
+/// A parsed template that can be rendered repeatedly without re-parsing.
+///
+/// Parsing dominates a small render, so pairing this with a reused [`Renderer`]
+/// is about twice as fast as passing the source string every time. Loop-heavy
+/// templates gain little, since evaluation dominates them instead.
+///
+/// Like `Renderer`, a `Template` is **not** `Send`; build one per thread.
+/// Cloning is cheap and shares the parsed tree.
+///
+/// # Examples
+///
+/// ```
+/// use prevue::{Renderer, Template};
+/// use serde_json::json;
+///
+/// let mut renderer = Renderer::new().unwrap();
+/// let template = Template::new("<p>{{ name }}</p>");
+///
+/// let first = renderer.render_template(&template, json!({ "name": "Ada" })).unwrap();
+/// let second = renderer.render_template(&template, json!({ "name": "Grace" })).unwrap();
+///
+/// assert!(first.contains("Ada"));
+/// assert!(second.contains("Grace"));
+/// ```
+#[derive(Clone)]
+pub struct Template {
+    document: Handle,
+}
+
+impl Template {
+    /// Parse `source`, applying the same error recovery a browser would.
+    pub fn new(source: impl AsRef<str>) -> Self {
+        Self {
+            document: template::parse(source.as_ref()).document,
+        }
+    }
+}
+
+impl std::fmt::Debug for Template {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Template").finish_non_exhaustive()
     }
 }
 
@@ -159,7 +215,7 @@ fn take_v_pre(handle: &Handle) -> bool {
     take_attribute(attrs, "v-pre").is_some()
 }
 
-// Render a node. Returns whether the node should stay in output.
+// Returns whether the node should stay in the output.
 fn traverse(handle: &Handle, engine: &mut Engine) -> Result<bool> {
     if take_v_pre(handle) {
         return Ok(true);
@@ -404,8 +460,7 @@ fn render_targets(node: &Handle, engine: &mut Engine) -> Result<Vec<Handle>> {
     Ok(rendered)
 }
 
-// Apply structural directives on a node.
-// Returns None to keep node, Some(vec) to replace
+// Returns `None` to keep the node, `Some(nodes)` to replace it.
 fn apply_directives(
     node: &Handle,
     engine: &mut Engine,
@@ -444,7 +499,6 @@ fn apply_directives(
         });
     }
 
-    // v-if
     if let Some(expr) = directive_if {
         if expr.trim().is_empty() {
             return Err(invalid_directive(
@@ -462,7 +516,6 @@ fn apply_directives(
         }));
     }
 
-    // v-else-if
     if let Some(expr) = directive_else_if {
         if expr.trim().is_empty() {
             return Err(invalid_directive(
@@ -490,7 +543,6 @@ fn apply_directives(
         }));
     }
 
-    // v-else
     if let Some(expr) = directive_else {
         if !expr.trim().is_empty() {
             return Err(invalid_directive(
@@ -518,7 +570,6 @@ fn apply_directives(
 
     if_chain.reset();
 
-    // v-for
     Ok(match directive_for {
         Some(expr) => Some(render_for(node, engine, &expr)?),
         None => None,
@@ -530,7 +581,6 @@ struct ForExpr {
     iter: String,
 }
 
-// Render v-for.
 fn render_for(node: &Handle, engine: &mut Engine, expr: &str) -> Result<Vec<Handle>> {
     let for_expr = parse_for_expr(engine, expr).ok_or_else(|| Error::InvalidDirective {
         directive: Directive::For,
@@ -664,7 +714,6 @@ fn is_identifier_continue(ch: char) -> bool {
     ch == '$' || ch == '_' || ch.is_alphanumeric()
 }
 
-// Render a single v-for item.
 fn render_for_item(
     node: &Handle,
     engine: &mut Engine,

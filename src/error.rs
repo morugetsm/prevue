@@ -79,8 +79,8 @@ fn format_directives(directives: &[Directive]) -> String {
 /// Errors returned while rendering a template.
 ///
 /// Each variant describes the operation that failed, such as preparing caller
-/// data, parsing a template, applying directives, installing render data,
-/// running setup code, or writing the final HTML.
+/// data, applying directives, installing render data, running setup code, or
+/// writing the final HTML.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// Render data could not be serialized to JSON.
@@ -89,14 +89,6 @@ pub enum Error {
         /// The serialization error reported by `serde_json`.
         #[source]
         source: serde_json::Error,
-    },
-
-    /// The template could not be parsed.
-    #[error("failed to parse template: {source}")]
-    TemplateParse {
-        /// The parse error reported by the HTML parser.
-        #[source]
-        source: std::io::Error,
     },
 
     /// The rendered document could not be written as final HTML output.

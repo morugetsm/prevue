@@ -7,16 +7,14 @@ use html5ever::{
 };
 use markup5ever_rcdom::{Handle, NodeData, RcDom};
 
-use crate::{Error, Result, interpolation};
+use crate::interpolation;
 
-pub(crate) fn parse(template: &str) -> Result<RcDom> {
-    let (template, mask) = mask_mustaches(template);
-    let dom = parse_document(RcDom::default(), ParseOpts::default())
-        .from_utf8()
-        .read_from(&mut template.as_bytes())
-        .map_err(|source| Error::TemplateParse { source })?;
+// html5ever applies HTML5 error recovery, so every input yields a document.
+pub(crate) fn parse(template: &str) -> RcDom {
+    let (masked, mask) = mask_mustaches(template);
+    let dom = parse_document(RcDom::default(), ParseOpts::default()).one(&*masked);
     restore_mustaches(&dom.document, &mask);
-    Ok(dom)
+    dom
 }
 
 struct Mask {

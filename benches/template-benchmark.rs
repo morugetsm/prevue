@@ -69,6 +69,15 @@ fn renderer(c: &mut Criterion) {
     group.finish();
 }
 
+/// Ids mirror `renderer`, so each pair isolates the cost of parsing.
+fn template(c: &mut Criterion) {
+    let mut group = c.benchmark_group("template");
+    bench_precompiled(&mut group, "static", STATIC_TEMPLATE, &text_input());
+    bench_precompiled(&mut group, "page", PAGE_TEMPLATE, &page_input());
+    bench_precompiled(&mut group, "table", TABLE_TEMPLATE, &table_input());
+    group.finish();
+}
+
 type Group<'a> = BenchmarkGroup<'a, WallTime>;
 
 fn bench<T: Serialize>(group: &mut Group<'_>, id: &str, template: &str, input: &T) {
@@ -82,6 +91,16 @@ fn bench_reused<T: Serialize>(group: &mut Group<'_>, id: &str, template: &str, i
     bench_renders(group, id, move || {
         renderer
             .render(black_box(template), black_box(input))
+            .unwrap()
+    });
+}
+
+fn bench_precompiled<T: Serialize>(group: &mut Group<'_>, id: &str, template: &str, input: &T) {
+    let mut renderer = prevue::Renderer::new().unwrap();
+    let template = prevue::Template::new(template);
+    bench_renders(group, id, move || {
+        renderer
+            .render_template(black_box(&template), black_box(input))
             .unwrap()
     });
 }
@@ -213,7 +232,7 @@ criterion_main!(benches);
 criterion_group! {
     name = benches;
     config = new_criterion();
-    targets = render, renderer
+    targets = render, renderer, template
 }
 
 fn new_criterion() -> Criterion {

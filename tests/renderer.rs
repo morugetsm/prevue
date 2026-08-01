@@ -1,4 +1,4 @@
-use prevue::{Renderer, render};
+use prevue::{Renderer, Template, render};
 use serde_json::json;
 
 // === Data isolation ===
@@ -149,6 +149,152 @@ fn repeated_renders_are_stable() {
     for _ in 0..5 {
         assert_eq!(renderer.render(template, &data).unwrap(), first);
     }
+}
+
+// === Precompiled templates ===
+//
+// A render strips directives and rewrites children, so these all check that it
+// worked on a copy and left the stored tree alone.
+
+/// Covers every kind of mutation a render makes: attribute removal, attribute
+/// rewriting, child replacement and text interpolation.
+const MIXED: &str = r#"<div>
+        <a :id="id" v-text="label">placeholder</a>
+        <p v-if="user.age >= 18">{{ user.name }} is adult</p>
+        <p v-else>{{ user.name }} is a minor</p>
+        <ul>
+            <li v-for="item, i in list" :class="{ first: i === 0 }">{{ item }}</li>
+        </ul>
+    </div>"#;
+
+fn mixed_data(name: &str, age: u8) -> serde_json::Value {
+    json!({
+        "id": "link-id",
+        "label": "link",
+        "user": { "name": name, "age": age },
+        "list": ["a", "b", "c"],
+    })
+}
+
+#[test]
+fn template_returns_to_an_earlier_result() {
+    // Interleaved on purpose: repeating one input passes even on a frozen tree.
+    let mut renderer = Renderer::new().unwrap();
+    let template = Template::new(MIXED);
+    let adult = mixed_data("James", 28);
+    let minor = mixed_data("Annie", 12);
+
+    let first = renderer.render_template(&template, &adult).unwrap();
+    let second = renderer.render_template(&template, &minor).unwrap();
+    let third = renderer.render_template(&template, &adult).unwrap();
+
+    assert_ne!(first, second);
+    assert_eq!(first, third);
+}
+
+#[test]
+fn template_matches_render() {
+    let data = mixed_data("James", 28);
+    let mut renderer = Renderer::new().unwrap();
+
+    assert_eq!(
+        renderer
+            .render_template(&Template::new(MIXED), &data)
+            .unwrap(),
+        render(MIXED, &data).unwrap()
+    );
+}
+
+#[test]
+fn template_takes_a_different_branch_on_new_data() {
+    // A leaked `v-if` removal would strand the second render on the first branch.
+    let mut renderer = Renderer::new().unwrap();
+    let template = Template::new(MIXED);
+
+    let adult = renderer
+        .render_template(&template, mixed_data("James", 28))
+        .unwrap();
+    let minor = renderer
+        .render_template(&template, mixed_data("Annie", 12))
+        .unwrap();
+
+    assert!(adult.contains("James is adult"), "{adult}");
+    assert!(!adult.contains("minor"), "{adult}");
+    assert!(minor.contains("Annie is a minor"), "{minor}");
+    assert!(!minor.contains("adult"), "{minor}");
+}
+
+#[test]
+fn cloned_template_is_independent() {
+    // A clone shares the stored tree, so each side must still see its own data.
+    let mut renderer = Renderer::new().unwrap();
+    let template = Template::new(MIXED);
+    let clone = template.clone();
+    let adult = mixed_data("James", 28);
+    let minor = mixed_data("Annie", 12);
+
+    let from_clone = renderer.render_template(&clone, &adult).unwrap();
+    let from_original = renderer.render_template(&template, &minor).unwrap();
+
+    assert_eq!(from_clone, render(MIXED, &adult).unwrap());
+    assert_eq!(from_original, render(MIXED, &minor).unwrap());
+}
+
+#[test]
+fn template_element_survives_precompile() {
+    // `template_contents` is the one branch of the copy that is not a subtree.
+    let source = r#"<template v-for="n in list"><b>{{ n }}</b><i>x</i></template>"#;
+    let mut renderer = Renderer::new().unwrap();
+    let template = Template::new(source);
+
+    let two = renderer
+        .render_template(&template, json!({ "list": [1, 2] }))
+        .unwrap();
+    let one = renderer
+        .render_template(&template, json!({ "list": [9] }))
+        .unwrap();
+
+    assert!(two.contains("<b>1</b><i>x</i><b>2</b><i>x</i>"), "{two}");
+    assert!(one.contains("<b>9</b><i>x</i>"), "{one}");
+    assert!(!one.contains("<b>1</b>"), "{one}");
+}
+
+#[test]
+fn doctype_survives_precompile() {
+    let source = "<!DOCTYPE html><html><body><p>{{ n }}</p></body></html>";
+    let mut renderer = Renderer::new().unwrap();
+    let template = Template::new(source);
+
+    let first = renderer
+        .render_template(&template, json!({ "n": 1 }))
+        .unwrap();
+    let second = renderer
+        .render_template(&template, json!({ "n": 2 }))
+        .unwrap();
+
+    assert!(first.starts_with("<!DOCTYPE html>"), "{first}");
+    assert!(second.starts_with("<!DOCTYPE html>"), "{second}");
+    assert!(first.contains("<p>1</p>"), "{first}");
+    assert!(second.contains("<p>2</p>"), "{second}");
+}
+
+#[test]
+fn setup_script_runs_on_every_template_render() {
+    // The script is removed from the copy, so the stored tree must still have it.
+    let source = r#"<script type="prevue">function greet(n) { return `hi, ${n}`; }</script><p>{{ greet(user) }}</p>"#;
+    let mut renderer = Renderer::new().unwrap();
+    let template = Template::new(source);
+
+    let one = renderer
+        .render_template(&template, json!({ "user": "Ada" }))
+        .unwrap();
+    let two = renderer
+        .render_template(&template, json!({ "user": "Grace" }))
+        .unwrap();
+
+    assert!(one.contains("hi, Ada"), "{one}");
+    assert!(two.contains("hi, Grace"), "{two}");
+    assert!(!two.contains("<script"), "{two}");
 }
 
 // === Documented limitation ===
