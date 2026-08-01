@@ -371,6 +371,26 @@ fn data_alias_mustache() {
 }
 
 #[test]
+fn data_alias_shares_identity() {
+    // A top-level field and its `$` counterpart are the same JavaScript value,
+    // not independent copies.
+    assert_render_body_eq!(
+        r#"<div>{{ list === $.list }}</div>"#,
+        json!({ "list": [1, 2, 3] }),
+        r#"<div>true</div>"#,
+    );
+}
+
+#[test]
+fn data_alias_mutation_is_shared() {
+    assert_render_body_eq!(
+        r#"<div>{{ list.push(4); $.list.join(",") }}</div>"#,
+        json!({ "list": [1, 2, 3] }),
+        r#"<div>1,2,3,4</div>"#,
+    );
+}
+
+#[test]
 fn data_alias_directives() {
     assert_render_body_eq!(
         r#"<div>

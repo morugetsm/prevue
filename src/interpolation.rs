@@ -86,13 +86,10 @@ where
                 }
                 '<' if tmpl_braces.is_empty() && should_stop(pos) => return None,
                 '}' if !tmpl_braces.is_empty() => {
-                    let depth = tmpl_braces
-                        .last_mut()
-                        .expect("non-empty template expression stack");
-                    if *depth == 0 {
+                    if tmpl_braces.last() == Some(&0) {
                         tmpl_braces.pop();
                         state = ScanState::Template;
-                    } else {
+                    } else if let Some(depth) = tmpl_braces.last_mut() {
                         *depth -= 1;
                     }
                     can_start_regex = false;

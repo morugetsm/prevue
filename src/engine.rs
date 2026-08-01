@@ -9,7 +9,8 @@ use boa_ast::{
 };
 use boa_engine::{
     Context, JsResult, JsString, JsValue, JsVariant, Source,
-    object::{ObjectInitializer, builtins::JsArray},
+    object::{JsObject, ObjectInitializer, builtins::JsArray},
+    property::PropertyKey,
     script::Script,
 };
 use boa_parser::{Parser, Source as ParserSource};
@@ -20,23 +21,54 @@ use crate::{Error, Result};
 
 #[derive(Clone, Debug)]
 pub(crate) enum ForBinding {
-    Slots(Vec<String>),
-    Pattern { source: String, locals: Vec<String> },
+    Slots(Vec<JsString>),
+    Pattern {
+        source: String,
+        locals: Vec<JsString>,
+    },
+}
+
+// One `with` level of the scope chain. The object stays installed on
+// `globalThis` so `v-for` iterations reuse it instead of churning globals.
+struct ScopeFrame {
+    object: JsObject,
+    written: Vec<JsString>,
+}
+
+impl ScopeFrame {
+    fn record(&mut self, key: JsString) {
+        if !self.written.contains(&key) {
+            self.written.push(key);
+        }
+    }
 }
 
 pub(crate) struct Engine {
-    pub context: Context,
-    scope_keys: Vec<String>,
+    context: Context,
+    // Compared against on every evaluation; building it each time is pure churn.
+    global: JsValue,
+    scopes: Vec<ScopeFrame>,
+    depth: usize,
     temp_depth: usize,
     eval_cache: Vec<HashMap<String, Script>>,
     for_binding_cache: HashMap<String, ForBinding>,
 }
 
+fn scope_key(depth: usize) -> String {
+    format!("__scope_{depth}")
+}
+
 impl Engine {
-    pub fn new(data: impl Serialize) -> Result<Self> {
+    /// Build the JavaScript context. This is by far the most expensive part of
+    /// a render, so callers that render repeatedly should keep the engine alive
+    /// and call [`Engine::install_data`] per render.
+    pub fn new() -> Result<Self> {
+        let context = Context::default();
         let mut engine = Self {
-            context: Context::default(),
-            scope_keys: Default::default(),
+            global: JsValue::new(context.global_object()),
+            context,
+            scopes: Default::default(),
+            depth: 0,
             temp_depth: 0,
             eval_cache: Default::default(),
             for_binding_cache: Default::default(),
@@ -46,69 +78,117 @@ impl Engine {
             message: format!("failed to manage JavaScript scope: {err}"),
         })?;
 
+        Ok(engine)
+    }
+
+    /// Replace the render data, dropping whatever a previous render installed.
+    pub fn install_data(&mut self, data: impl Serialize) -> Result<()> {
+        // A render that failed inside a `v-for` still unwinds its scopes, but
+        // pin the depth anyway so one bad render cannot poison the next.
+        self.depth = 1;
+        self.reset_scope(&[]);
+
         let json = serde_json::to_value(data).map_err(|source| Error::DataSerialize { source })?;
-        let value =
-            JsValue::from_json(&json, &mut engine.context).map_err(|err| Error::DataInit {
-                field: None,
-                message: err.to_string(),
-            })?;
-        engine.set_val("$", value).map_err(|err| Error::DataInit {
+        let root = JsValue::from_json(&json, &mut self.context).map_err(|err| Error::DataInit {
             field: None,
             message: err.to_string(),
         })?;
+        self.set_val("$", root.clone())
+            .map_err(|err| Error::DataInit {
+                field: None,
+                message: err.to_string(),
+            })?;
 
-        if let Some(obj) = json.as_object() {
-            for (key, value) in obj.iter().filter(|(key, _)| key.as_str() != "$") {
-                let field = Some(key.clone());
-                let value = JsValue::from_json(value, &mut engine.context).map_err(|err| {
-                    Error::DataInit {
-                        field: field.clone(),
-                        message: err.to_string(),
+        // Objects and arrays are read back off `$` rather than converted twice,
+        // so `list` and `$.list` are the same object. Primitives have no
+        // identity to share, so re-converting them is equivalent and cheaper.
+        if let (Some(fields), Some(root)) = (json.as_object(), root.as_object()) {
+            for (name, value) in fields.iter().filter(|(name, _)| name.as_str() != "$") {
+                let field = Some(name.clone());
+                let value = match value {
+                    JsonValue::Object(_) | JsonValue::Array(_) => {
+                        root.get(JsString::from(name.as_str()), &mut self.context)
                     }
+                    primitive => JsValue::from_json(primitive, &mut self.context),
+                }
+                .map_err(|err| Error::DataInit {
+                    field: field.clone(),
+                    message: err.to_string(),
                 })?;
-                engine.set_val(key, value).map_err(|err| Error::DataInit {
+                self.set_val(name, value).map_err(|err| Error::DataInit {
                     field,
                     message: err.to_string(),
                 })?;
             }
         }
 
-        Ok(engine)
+        Ok(())
     }
 
     pub fn enter_scope(&mut self) -> JsResult<()> {
-        let key = format!("__scope_{}", self.scope_keys.len());
-        let scope = ObjectInitializer::new(&mut self.context).build();
-        self.context.global_object().set(
-            JsString::from(key.as_str()),
-            scope,
-            false,
-            &mut self.context,
-        )?;
-        self.scope_keys.push(key);
+        if self.depth == self.scopes.len() {
+            let object = ObjectInitializer::new(&mut self.context).build();
+            let key = JsString::from(scope_key(self.depth).as_str());
+            self.context
+                .global_object()
+                .set(key, object.clone(), false, &mut self.context)?;
+            self.scopes.push(ScopeFrame {
+                object,
+                written: Vec::new(),
+            });
+        }
+        self.depth += 1;
+        self.reset_scope(&[]);
         Ok(())
     }
 
     pub fn exit_scope(&mut self) {
-        if let Some(key) = self.scope_keys.pop() {
-            let _ = self
-                .context
-                .global_object()
-                .delete_property_or_throw(JsString::from(key), &mut self.context);
+        self.depth = self.depth.saturating_sub(1);
+    }
+
+    /// Drop bindings left by a previous user of this scope, except those the
+    /// caller is about to overwrite anyway.
+    fn reset_scope(&mut self, keep: &[JsString]) {
+        let Some(index) = self.depth.checked_sub(1) else {
+            return;
+        };
+        let Some(scope) = self.scopes.get_mut(index) else {
+            return;
+        };
+        if scope.written.is_empty() {
+            return;
         }
+
+        let object = scope.object.clone();
+        let mut written = std::mem::take(&mut scope.written);
+        written.retain(|key| {
+            if keep.contains(key) {
+                return true;
+            }
+            let _ = object.delete_property_or_throw(key.clone(), &mut self.context);
+            false
+        });
+        self.scopes[index].written = written;
     }
 
     pub fn set_val(&mut self, key: &str, value: JsValue) -> JsResult<()> {
-        let mut scope = self.context.global_object();
+        self.set_val_js(JsString::from(key), value)
+    }
 
-        if let Some(scope_key) = self.scope_keys.last() {
-            let scope_val = scope.get(JsString::from(scope_key.as_str()), &mut self.context)?;
-            if let Some(local) = scope_val.as_object() {
-                scope = local;
+    fn set_val_js(&mut self, key: JsString, value: JsValue) -> JsResult<()> {
+        let scope = match self
+            .depth
+            .checked_sub(1)
+            .and_then(|i| self.scopes.get_mut(i))
+        {
+            Some(scope) => {
+                scope.record(key.clone());
+                scope.object.clone()
             }
-        }
+            None => self.context.global_object(),
+        };
 
-        scope.set(JsString::from(key), value, false, &mut self.context)?;
+        scope.set(key, value, false, &mut self.context)?;
         Ok(())
     }
 
@@ -144,16 +224,22 @@ impl Engine {
             return None;
         }
 
+        let to_js = |names: Vec<String>| {
+            names
+                .iter()
+                .map(|name| JsString::from(name.as_str()))
+                .collect::<Vec<_>>()
+        };
         let binding = if let Some(slots) =
             simple_slot_names(array_pattern.bindings(), self.context.interner())
         {
-            ForBinding::Slots(slots)
+            ForBinding::Slots(to_js(slots))
         } else {
             let mut locals = Vec::new();
             collect_binding_names(binding, self.context.interner(), &mut locals);
             ForBinding::Pattern {
                 source: pattern.to_string(),
-                locals,
+                locals: to_js(locals),
             }
         };
         self.for_binding_cache
@@ -164,24 +250,31 @@ impl Engine {
     pub fn bind_for_slots(&mut self, binding: &ForBinding, slots: &[JsValue]) -> bool {
         match binding {
             ForBinding::Slots(names) => {
+                self.reset_scope(names);
                 for (idx, name) in names.iter().enumerate() {
                     let value = slots.get(idx).cloned().unwrap_or_else(JsValue::undefined);
-                    if self.set_val(name, value).is_err() {
+                    if self.set_val_js(name.clone(), value).is_err() {
                         return false;
                     }
                 }
                 true
             }
             ForBinding::Pattern { source, locals } => {
-                let Some(scope_key) = self.scope_keys.last().cloned() else {
+                self.reset_scope(locals);
+                let Some(index) = self.depth.checked_sub(1) else {
                     return false;
                 };
+                // The generated copies bypass `set_val_js`, so record them here.
+                for name in locals {
+                    self.scopes[index].record(name.clone());
+                }
+
+                let scope_ref = js_string_literal(&scope_key(index));
                 let slot_array = JsArray::from_iter(slots.iter().cloned(), &mut self.context);
                 self.with_temp(slot_array.into(), |engine, temp_ref| {
-                    let scope_ref = js_string_literal(&scope_key);
                     let copies = locals
                         .iter()
-                        .map(|name| copy_to_scope(&scope_ref, name))
+                        .map(|name| copy_to_scope(&scope_ref, &name.to_std_string_escaped()))
                         .collect::<String>();
                     engine
                         .eval(&format!(
@@ -191,6 +284,61 @@ impl Engine {
                 })
                 .is_ok()
             }
+        }
+    }
+
+    /// `None` when the value has no JSON form (`undefined`, function, symbol).
+    pub fn json_value(&mut self, value: &JsValue) -> Option<JsonValue> {
+        value.to_json(&mut self.context).ok().flatten()
+    }
+
+    pub fn get_prop(&mut self, obj: &JsObject, key: impl Into<PropertyKey>) -> JsValue {
+        obj.get(key, &mut self.context)
+            .unwrap_or_else(|_| JsValue::undefined())
+    }
+
+    /// `None` if the object is not an array.
+    pub fn array_length(&mut self, obj: &JsObject) -> Option<u64> {
+        JsArray::from_object(obj.clone())
+            .ok()?
+            .length(&mut self.context)
+            .ok()
+    }
+
+    /// Every element of an array object, holes read as `undefined`.
+    pub fn array_values(&mut self, obj: &JsObject) -> Vec<JsValue> {
+        let Some(length) = self.array_length(obj) else {
+            return Vec::new();
+        };
+
+        (0..length).map(|idx| self.get_prop(obj, idx)).collect()
+    }
+
+    /// `Object.keys(value)` — own enumerable string keys, in insertion order.
+    pub fn object_keys(&mut self, value: JsValue) -> Vec<JsValue> {
+        self.eval_with_temp_val(value, |temp_ref| {
+            format!("Object.keys(globalThis[{temp_ref}])")
+        })
+        .ok()
+        .and_then(|keys| keys.as_object().map(|obj| self.array_values(&obj)))
+        .unwrap_or_default()
+    }
+
+    /// The values `Symbol.iterator` yields, or `None` when not iterable.
+    pub fn iterable_values(&mut self, value: JsValue) -> Option<Vec<JsValue>> {
+        let value = self
+            .eval_with_temp_val(value, |temp_ref| {
+                format!(
+                    "let value = globalThis[{temp_ref}]; \
+                     let iterator = value == null ? undefined : value[Symbol.iterator]; \
+                     typeof iterator === 'function' ? Array.from(value) : null"
+                )
+            })
+            .ok()?;
+
+        match value.variant() {
+            JsVariant::Object(obj) if obj.is_array() => Some(self.array_values(&obj)),
+            _ => None,
         }
     }
 
@@ -228,18 +376,17 @@ impl Engine {
     }
 
     pub fn eval(&mut self, code: &str) -> JsResult<JsValue> {
-        let depth = self.scope_keys.len();
+        let depth = self.depth;
         let script =
             if let Some(script) = self.eval_cache.get(depth).and_then(|cache| cache.get(code)) {
                 script.clone()
             } else {
-                let scoped = self
-                    .scope_keys
-                    .iter()
-                    .rev()
-                    .fold(code.to_string(), |acc, key| {
-                        format!(r#"with (globalThis["{key}"]) {{ {acc} }}"#)
-                    });
+                let scoped = (0..depth).rev().fold(code.to_string(), |acc, index| {
+                    format!(
+                        r#"with (globalThis["{key}"]) {{ {acc} }}"#,
+                        key = scope_key(index)
+                    )
+                });
                 let script = Script::parse(
                     Source::from_bytes(scoped.as_bytes()),
                     None,
@@ -253,7 +400,7 @@ impl Engine {
             };
         let evaluated = script.evaluate(&mut self.context)?;
 
-        if evaluated.strict_equals(&JsValue::new(self.context.global_object())) {
+        if evaluated.strict_equals(&self.global) {
             Ok(JsValue::null())
         } else {
             Ok(evaluated)
@@ -262,17 +409,26 @@ impl Engine {
 
     pub fn eval_setup(&mut self, code: &str) -> JsResult<()> {
         let names = self.parse_setup_bindings(code)?;
-        let Some(scope_key) = self.scope_keys.last() else {
+        let Some(index) = self.depth.checked_sub(1) else {
             return Ok(());
         };
 
-        let scope_ref = js_string_literal(scope_key);
+        let scope_ref = js_string_literal(&scope_key(index));
         let copies = names
             .iter()
             .filter(|name| name.as_str() != "$")
             .map(|name| copy_to_scope(&scope_ref, name))
             .collect::<String>();
-        self.eval(&format!("{code}\n{copies}")).map(|_| ())
+        // Wrapped in a function so `var` and (Annex B) function declarations
+        // land in its scope instead of leaking onto `globalThis`; the copies
+        // still publish them to the scope object for later expressions.
+        self.eval(&format!("(function () {{\n{code}\n{copies}\n}})();"))?;
+
+        // Without this a reused scope would carry these into the next iteration.
+        for name in names.iter().filter(|name| name.as_str() != "$") {
+            self.scopes[index].record(JsString::from(name.as_str()));
+        }
+        Ok(())
     }
 
     pub fn eval_expr(&mut self, code: &str) -> JsResult<JsValue> {

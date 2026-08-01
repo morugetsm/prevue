@@ -290,6 +290,17 @@ fn script_for_iteration_scope() {
 }
 
 #[test]
+fn script_for_iteration_bindings_do_not_leak() {
+    // The setup script only runs on the first iteration; its binding must be
+    // gone by the time the second iteration renders.
+    assert_render_eq!(
+        r#"<ul><li v-for="n in [1, 2]"><template v-if="n === 1"><script type="prevue">const once = 'set';</script></template>{{ typeof once }}</li></ul>"#,
+        json!({}),
+        r#"<html><head></head><body><ul><li>string</li><li>undefined</li></ul></body></html>"#,
+    );
+}
+
+#[test]
 fn script_structural_template_executes() {
     assert_render_eq!(
         r#"

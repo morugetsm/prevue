@@ -1,6 +1,6 @@
 [package]
 name = "prevue"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["morugetsm <shouu6@gmail.com>"]
@@ -11,6 +11,11 @@ readme = "README.md"
 keywords = ["template", "html", "vue"]
 categories = ["template-engine"]
 
+[lib]
+# The crate has no libtest benches; without this `cargo bench` runs the default
+# harness for the lib target and rejects criterion's CLI flags.
+bench = false
+
 [dependencies]
 boa_ast = "0.21"
 boa_engine = { version = "0.21", features = ["deser"] }
@@ -20,3 +25,11 @@ markup5ever_rcdom = "0.39.0"
 serde = "1.0"
 serde_json = { version = "1.0", features = ["preserve_order"] }
 thiserror = "2.0"
+
+[dev-dependencies]
+ahash = { version = "0.8", features = ["no-rng"] }
+criterion = { version = "0.8", features = ["html_reports"] }
+
+[[bench]]
+name = "template-benchmark"
+harness = false

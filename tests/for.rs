@@ -671,6 +671,26 @@ fn for_with_leading_polluted() {
 }
 
 #[test]
+fn for_sibling_loops_do_not_share_scope() {
+    // Sibling loops reuse the same scope depth; the first loop's binding must
+    // not still be visible inside the second.
+    assert_render_body_eq!(
+        r#"<div><p v-for="a in [1]">{{ a }}</p><p v-for="b in [2]">{{ typeof a }}</p></div>"#,
+        json!({}),
+        r#"<div><p>1</p><p>undefined</p></div>"#,
+    );
+}
+
+#[test]
+fn for_nested_loop_does_not_leak_to_sibling() {
+    assert_render_body_eq!(
+        r#"<div><p v-for="outer in [1]"><b v-for="inner in [9]">{{ inner }}</b></p><p v-for="other in [2]">{{ typeof inner }}</p></div>"#,
+        json!({}),
+        r#"<div><p><b>9</b></p><p>undefined</p></div>"#,
+    );
+}
+
+#[test]
 fn for_missing_iterable_is_empty() {
     assert_render_body_eq!(
         r#"<div>

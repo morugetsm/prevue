@@ -1,26 +1,26 @@
-use std::{
-    cell::RefCell,
-    rc::{Rc, Weak},
-    str::FromStr,
-};
+use std::rc::Rc;
 
-use boa_engine::{JsValue, JsVariant, object::builtins::JsArray};
-use html5ever::{
-    QualName,
-    driver::ParseOpts,
-    parse_fragment, serialize,
-    tendril::{StrTendril, TendrilSink},
-};
-use markup5ever_rcdom::{Handle, Node, NodeData, RcDom, SerializableHandle};
+use boa_engine::{JsValue, JsVariant};
+use html5ever::{serialize, tendril::StrTendril};
+use markup5ever_rcdom::{Handle, NodeData, SerializableHandle};
 use serde::Serialize;
-use serde_json::Value as JsonValue;
 
+mod attr_value;
+mod dom;
 mod engine;
 mod error;
+mod indent;
 mod interpolation;
 mod template;
+use attr_value::{AttrEdits, normalize_bound_attribute, validate_attribute_name};
+use dom::{
+    create_text_node, expand_targets, is_element, is_inert_template, is_non_whitespace_text_node,
+    is_raw_text_element, is_whitespace_text_node, parse_html_fragment, replace_element_children,
+    replace_node_in_parent, take_attribute, text_content,
+};
 use engine::{Engine, ForBinding};
 pub use error::{Directive, DirectiveErrorKind, Error, Result};
+use indent::get_indent;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Walk {
@@ -28,20 +28,103 @@ enum Walk {
     Done,
 }
 
-#[derive(Default)]
-struct IfChain {
-    active: bool,
-    matched: bool,
+/// Position in a `v-if` / `v-else-if` / `v-else` run of adjacent siblings.
+/// While `Closed`, a `v-else-if` or `v-else` is an orphan.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum IfChain {
+    #[default]
+    Closed,
+    Open,
+    Matched,
 }
 
 impl IfChain {
     fn reset(&mut self) {
-        self.active = false;
-        self.matched = false;
+        *self = Self::Closed;
+    }
+
+    fn is_open(self) -> bool {
+        self != Self::Closed
+    }
+
+    fn has_matched(self) -> bool {
+        self == Self::Matched
+    }
+
+    fn set_matched(&mut self, matched: bool) {
+        *self = if matched { Self::Matched } else { Self::Open };
+    }
+}
+
+/// A reusable renderer that keeps its JavaScript context alive across renders.
+///
+/// Building that context is the dominant cost of a small render, so reusing one
+/// `Renderer` is several times faster than calling [`render`] repeatedly.
+/// Compiled template expressions are cached on it too, so re-rendering the same
+/// template never re-parses them.
+///
+/// The context is shared, which has two consequences worth knowing:
+///
+/// - A `Renderer` is **not** `Send`, because the underlying engine is not. Use
+///   one per thread, or a pool.
+/// - Render data is replaced on every call, but JavaScript globals a template
+///   creates on purpose — `var` inside `{{ }}`, an undeclared assignment, a
+///   write to `globalThis`, a mutated built-in — outlive the render. Setup
+///   scripts do not leak; their declarations are scoped.
+///
+/// # Examples
+///
+/// ```
+/// use prevue::Renderer;
+/// use serde_json::json;
+///
+/// let mut renderer = Renderer::new().unwrap();
+/// let template = "<p>{{ name }}</p>";
+///
+/// let first = renderer.render(template, json!({ "name": "Ada" })).unwrap();
+/// let second = renderer.render(template, json!({ "name": "Grace" })).unwrap();
+///
+/// assert!(first.contains("Ada"));
+/// assert!(second.contains("Grace"));
+/// ```
+pub struct Renderer {
+    engine: Engine,
+}
+
+impl Renderer {
+    /// Build a renderer, paying the JavaScript context setup cost once.
+    pub fn new() -> Result<Self> {
+        Ok(Self {
+            engine: Engine::new()?,
+        })
+    }
+
+    /// Render `template` with `data`, replacing the data from any prior render.
+    pub fn render(&mut self, template: impl AsRef<str>, data: impl Serialize) -> Result<String> {
+        let mut buffer = Vec::new();
+        let dom = template::parse(template.as_ref())?;
+        self.engine.install_data(data)?;
+        traverse(&dom.document, &mut self.engine)?;
+
+        serialize(
+            &mut buffer,
+            &SerializableHandle::from(Rc::clone(&dom.document)),
+            Default::default(),
+        )
+        .map_err(|source| Error::RenderOutput {
+            message: format!("failed to serialize HTML: {source}"),
+        })?;
+
+        String::from_utf8(buffer).map_err(|source| Error::RenderOutput {
+            message: format!("failed to convert rendered HTML to UTF-8: {source}"),
+        })
     }
 }
 
 /// Render template with data
+///
+/// Each call builds a fresh JavaScript context. To render repeatedly, use
+/// [`Renderer`] instead and pay that cost once.
 ///
 /// # Examples
 ///
@@ -55,23 +138,7 @@ impl IfChain {
 /// assert!(result.contains("Hello"));
 /// ```
 pub fn render(template: impl AsRef<str>, data: impl Serialize) -> Result<String> {
-    let mut buffer = Vec::new();
-    let dom = template::parse(template.as_ref())?;
-    let mut engine = Engine::new(data)?;
-    traverse(&dom.document, &mut engine)?;
-
-    serialize(
-        &mut buffer,
-        &SerializableHandle::from(Rc::clone(&dom.document)),
-        Default::default(),
-    )
-    .map_err(|source| Error::RenderOutput {
-        message: format!("failed to serialize HTML: {source}"),
-    })?;
-
-    String::from_utf8(buffer).map_err(|source| Error::RenderOutput {
-        message: format!("failed to convert rendered HTML to UTF-8: {source}"),
-    })
+    Renderer::new()?.render(template, data)
 }
 
 fn is_setup_script(handle: &Handle) -> bool {
@@ -85,29 +152,11 @@ fn is_setup_script(handle: &Handle) -> bool {
         })
 }
 
-fn is_raw_text_element(handle: &Handle) -> bool {
-    let NodeData::Element { name, .. } = &handle.data else {
-        return false;
-    };
-
-    matches!(name.local.as_ref(), "script" | "style")
-}
-
-fn text_content(handle: &Handle) -> String {
-    let mut text = String::new();
-    for child in handle.children.borrow().iter() {
-        if let NodeData::Text { contents } = &child.data {
-            text.push_str(&contents.borrow());
-        }
-    }
-    text
-}
-
 fn take_v_pre(handle: &Handle) -> bool {
     let NodeData::Element { attrs, .. } = &handle.data else {
         return false;
     };
-    find_and_remove_directive(attrs, "v-pre").is_some()
+    take_attribute(attrs, "v-pre").is_some()
 }
 
 // Render a node. Returns whether the node should stay in output.
@@ -132,39 +181,78 @@ fn traverse(handle: &Handle, engine: &mut Engine) -> Result<bool> {
     if is_raw_text_element(handle) {
         return Ok(true);
     }
-    if handle.children.borrow().is_empty() {
+    if handle.children.borrow().is_empty() || is_inert_template(handle) {
         return Ok(true);
     }
 
-    let children: Vec<Handle> = children_for_traversal(handle);
+    // Only element children can be dropped or expanded, so without them the
+    // child list cannot change and interpolating in place is enough.
+    if !handle.children.borrow().iter().any(is_element) {
+        for child in handle.children.borrow().iter() {
+            if is_non_whitespace_text_node(child) {
+                render_content(child, engine)?;
+            }
+        }
+        return Ok(true);
+    }
 
+    let children: Vec<Handle> = handle.children.borrow().iter().cloned().collect();
+
+    // The nodes are already in the tree, so `Keep` needs no work here.
+    walk_siblings(children, engine, |node, placement| {
+        match placement {
+            Placement::Keep => {}
+            Placement::Drop => replace_node_in_parent(&node, &[]),
+            Placement::Replace(nodes) => replace_node_in_parent(&node, &nodes),
+        }
+        Ok(())
+    })?;
+
+    Ok(true)
+}
+
+/// What the structural directives decided about one node of a sibling sequence.
+enum Placement {
+    Keep,
+    Drop,
+    Replace(Vec<Handle>),
+}
+
+/// Apply `v-pre` and the structural directives across siblings under one shared
+/// [`IfChain`]. Callers differ only in where `place` puts the results.
+fn walk_siblings(
+    nodes: impl IntoIterator<Item = Handle>,
+    engine: &mut Engine,
+    mut place: impl FnMut(Handle, Placement) -> Result<()>,
+) -> Result<()> {
     let mut if_chain = IfChain::default();
 
-    for node in children.iter() {
-        if take_v_pre(node) {
+    for node in nodes {
+        if take_v_pre(&node) {
             if_chain.reset();
+            place(node, Placement::Keep)?;
             continue;
         }
 
-        let is_non_whitespace_text = is_non_whitespace_text_node(node);
-        if is_non_whitespace_text {
+        let is_text = is_non_whitespace_text_node(&node);
+        if is_text {
             if_chain.reset();
         }
 
-        if !matches!(&node.data, NodeData::Element { .. }) && !is_non_whitespace_text {
+        // Comments and whitespace carry no directives and leave the chain alone.
+        if !is_text && !is_element(&node) {
+            place(node, Placement::Keep)?;
             continue;
         }
 
-        let processed = apply_directives(node, engine, &mut if_chain)?;
-
-        if let Some(replacements) = processed {
-            replace_node_in_parent(node, &replacements);
-        } else if !traverse(node, engine)? {
-            replace_node_in_parent(node, &[]);
+        match apply_directives(&node, engine, &mut if_chain)? {
+            Some(replacements) => place(node, Placement::Replace(replacements))?,
+            None if traverse(&node, engine)? => place(node, Placement::Keep)?,
+            None => place(node, Placement::Drop)?,
         }
     }
 
-    Ok(true)
+    Ok(())
 }
 
 // Render v-bind, v-text, v-html, and mustache on the current node.
@@ -222,15 +310,13 @@ fn render_content(handle: &Handle, engine: &mut Engine) -> Result<Walk> {
                     if let Ok(bound) = engine.eval_expr(attr.value.as_ref())
                         && let JsVariant::Object(obj) = bound.variant()
                     {
-                        for key in object_keys(engine, bound.clone()) {
+                        for key in engine.object_keys(bound.clone()) {
                             let Some(key_string) = key.as_string() else {
                                 continue;
                             };
                             let key = key_string.to_std_string_escaped();
-                            let value = obj
-                                .get(key_string, &mut engine.context)
-                                .ok()
-                                .and_then(|value| normalize_bound_attribute(engine, &key, &value));
+                            let value = engine.get_prop(&obj, key_string);
+                            let value = normalize_bound_attribute(engine, &key, &value);
                             if let Some(value) = value {
                                 validate_attribute_name(&key)?;
                                 edits.add(key, attr.name.clone(), value);
@@ -295,7 +381,7 @@ fn render_content(handle: &Handle, engine: &mut Engine) -> Result<Walk> {
             let mut content = contents.borrow_mut();
 
             if let Some(rendered) = interpolation::render_text(&content, engine) {
-                *content = StrTendril::from_str(&rendered).unwrap();
+                *content = StrTendril::from(rendered.as_str());
             }
             Ok(Walk::Children)
         }
@@ -303,345 +389,17 @@ fn render_content(handle: &Handle, engine: &mut Engine) -> Result<Walk> {
     }
 }
 
-#[derive(Default)]
-struct AttrEdits {
-    sets: Vec<(usize, String, String)>,
-    removes: Vec<usize>,
-    adds: Vec<(String, QualName, String)>,
-}
-
-impl AttrEdits {
-    fn set(&mut self, idx: usize, name: String, value: String) {
-        self.sets.push((idx, name, value));
-    }
-
-    fn remove(&mut self, idx: usize) {
-        self.removes.push(idx);
-    }
-
-    fn add(&mut self, name: String, template: QualName, value: String) {
-        self.adds.push((name, template, value));
-    }
-
-    fn apply(self, attrs: &RefCell<Vec<html5ever::Attribute>>) {
-        let mut attrs_mut = attrs.borrow_mut();
-        for (idx, name, value) in self.sets.iter().rev() {
-            attrs_mut[*idx].name.local = html5ever::LocalName::from(name.as_str());
-            attrs_mut[*idx].value = StrTendril::from_str(value.as_str()).unwrap();
-        }
-        for idx in self.removes.iter().rev() {
-            attrs_mut.remove(*idx);
-        }
-        drop(attrs_mut);
-
-        let mut attrs_mut = attrs.borrow_mut();
-        for (name, template, value) in self.adds {
-            if let Some(existing) = attrs_mut
-                .iter_mut()
-                .find(|attr| attr.name.local.as_ref() == name.as_str())
-            {
-                let value = match name.as_str() {
-                    "class" => merge_class(existing.value.as_ref(), &value),
-                    "style" => merge_style(existing.value.as_ref(), &value),
-                    _ => value,
-                };
-                existing.value = StrTendril::from_str(value.as_str()).unwrap();
-            } else {
-                attrs_mut.push(html5ever::Attribute {
-                    name: QualName::new(
-                        template.prefix.clone(),
-                        template.ns.clone(),
-                        html5ever::LocalName::from(name.as_str()),
-                    ),
-                    value: StrTendril::from_str(value.as_str()).unwrap(),
-                });
-            }
-        }
-    }
-}
-
-fn parse_html_fragment(context_name: &QualName, html: &str) -> Vec<Handle> {
-    let dom = parse_fragment(
-        RcDom::default(),
-        ParseOpts::default(),
-        context_name.clone(),
-        Vec::new(),
-        false,
-    )
-    .one(html);
-
-    let root_nodes = dom
-        .document
-        .children
-        .borrow()
-        .iter()
-        .cloned()
-        .collect::<Vec<_>>();
-    let nodes = match root_nodes.as_slice() {
-        [root]
-            if matches!(
-                &root.data,
-                NodeData::Element { name, .. } if name.local.as_ref() == "html"
-            ) =>
-        {
-            root.children.borrow().iter().cloned().collect::<Vec<_>>()
-        }
-        _ => root_nodes,
-    };
-
-    // Clone fragment nodes before attaching them to the main document. Moving
-    // RcDom fragment handles directly can leave their subtree tied to the
-    // temporary parser document.
-    nodes
-        .iter()
-        .map(|node| {
-            let cloned = clone_node(node);
-            cloned.parent.take();
-            cloned
-        })
-        .collect()
-}
-
-fn replace_element_children(handle: &Handle, new_children: Vec<Handle>) {
-    for child in handle.children.borrow().iter() {
-        child.parent.take();
-    }
-
-    for child in new_children.iter() {
-        child.parent.set(Some(Rc::downgrade(handle)));
-    }
-
-    *handle.children.borrow_mut() = new_children;
-}
-
-fn normalize_bound_attribute(engine: &mut Engine, key: &str, value: &JsValue) -> Option<String> {
-    match key {
-        "class" | "style" => {
-            let value = value.to_json(&mut engine.context).ok().flatten()?;
-            if key == "class" {
-                normalize_class(&value)
-            } else {
-                normalize_style(&value)
-            }
-        }
-        _ => engine.stringify(value),
-    }
-}
-
-fn validate_attribute_name(name: &str) -> Result<()> {
-    (!name.is_empty()
-        && name
-            .chars()
-            .all(|ch| !ch.is_ascii_whitespace() && !matches!(ch, '\0' | '>' | '/' | '=')))
-    .then_some(())
-    .ok_or_else(|| Error::InvalidAttributeName {
-        name: name.to_string(),
-    })
-}
-
-fn normalize_class(value: &JsonValue) -> Option<String> {
-    fn collect(value: &JsonValue, classes: &mut Vec<String>) {
-        match value {
-            JsonValue::String(value) => {
-                let value = value.trim();
-                if !value.is_empty() {
-                    classes.push(value.to_string());
-                }
-            }
-            JsonValue::Array(values) => {
-                for value in values {
-                    collect(value, classes);
-                }
-            }
-            JsonValue::Object(values) => {
-                for (name, enabled) in values {
-                    if json_truthy(enabled) {
-                        classes.push(name.clone());
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    let mut classes = Vec::new();
-    collect(value, &mut classes);
-    (!classes.is_empty()).then(|| classes.join(" "))
-}
-
-fn normalize_style(value: &JsonValue) -> Option<String> {
-    match value {
-        JsonValue::String(value) => {
-            let value = value.trim();
-            (!value.is_empty()).then(|| value.to_string())
-        }
-        JsonValue::Array(values) => values
-            .iter()
-            .filter_map(normalize_style)
-            .reduce(|merged, value| merge_style(&merged, &value)),
-        JsonValue::Object(values) => {
-            let styles = values
-                .iter()
-                .filter_map(|(name, value)| {
-                    style_value(value)
-                        .map(|value| format!("{}: {};", css_property_name(name), value))
-                })
-                .collect::<Vec<_>>();
-            (!styles.is_empty()).then(|| styles.join(" "))
-        }
-        _ => None,
-    }
-}
-
-fn style_value(value: &JsonValue) -> Option<String> {
-    match value {
-        JsonValue::String(value) if !value.is_empty() => Some(value.clone()),
-        JsonValue::Number(value) => Some(value.to_string()),
-        JsonValue::Array(values) => values.iter().rev().find_map(style_value),
-        _ => None,
-    }
-}
-
-fn css_property_name(name: &str) -> String {
-    if name.starts_with("--") {
-        return name.to_string();
-    }
-
-    name.chars().fold(String::new(), |mut property, ch| {
-        if ch.is_ascii_uppercase() {
-            property.push('-');
-            property.push(ch.to_ascii_lowercase());
-        } else {
-            property.push(ch);
-        }
-        property
-    })
-}
-
-fn json_truthy(value: &JsonValue) -> bool {
-    match value {
-        JsonValue::Null => false,
-        JsonValue::Bool(value) => *value,
-        JsonValue::Number(value) => value.as_f64().is_some_and(|value| value != 0.0),
-        JsonValue::String(value) => !value.is_empty(),
-        JsonValue::Array(_) | JsonValue::Object(_) => true,
-    }
-}
-
-fn merge_class(existing: &str, value: &str) -> String {
-    match (existing.trim(), value.trim()) {
-        ("", value) => value.to_string(),
-        (existing, "") => existing.to_string(),
-        (existing, value) => format!("{existing} {value}"),
-    }
-}
-
-fn merge_style(existing: &str, value: &str) -> String {
-    match (existing.trim(), value.trim()) {
-        ("", value) => value.to_string(),
-        (existing, "") => existing.to_string(),
-        (existing, value) if existing.ends_with(';') => format!("{existing} {value}"),
-        (existing, value) => format!("{existing}; {value}"),
-    }
-}
-
-// Replace node with new_nodes in its parent's children
-fn replace_node_in_parent(node: &Handle, new_nodes: &[Handle]) {
-    let Some(node_parent_weak) = node.parent.take() else {
-        return;
-    };
-    node.parent.set(Some(Weak::clone(&node_parent_weak)));
-    let Some(node_parent) = node_parent_weak.upgrade() else {
-        return;
-    };
-
-    let mut children = node_parent.children.borrow_mut();
-    let Some(pos) = children.iter().position(|c| Rc::ptr_eq(c, node)) else {
-        return;
-    };
-
-    // Check if previous sibling is whitespace indent
-    let has_indent_before = pos > 0 && {
-        if let NodeData::Text { contents } = &children[pos - 1].data {
-            let text = contents.borrow();
-            text.chars().all(|c| c.is_whitespace())
-                || text
-                    .rfind('\n')
-                    .is_some_and(|nl| text[nl + 1..].chars().all(|c| c.is_whitespace()))
-        } else {
-            false
-        }
-    };
-
-    if new_nodes.is_empty() {
-        if has_indent_before {
-            if let NodeData::Text { contents } = &children[pos - 1].data {
-                let text = contents.borrow().to_string();
-                if let Some(nl) = text.rfind('\n') {
-                    let before_nl = &text[..nl];
-                    if before_nl.is_empty() {
-                        children.remove(pos - 1);
-                        children.remove(pos - 1);
-                    } else {
-                        contents.replace(StrTendril::from_str(before_nl).unwrap());
-                        children.remove(pos);
-                    }
-                } else if text.chars().all(|c| c.is_whitespace()) {
-                    children.remove(pos - 1);
-                    children.remove(pos - 1);
-                } else {
-                    children.remove(pos);
-                }
-            }
-        } else {
-            children.remove(pos);
-        }
-    } else {
-        // Replacing node with new nodes
-        children.remove(pos);
-        for (i, new_node) in new_nodes.iter().enumerate() {
-            new_node.parent.set(Some(Weak::clone(&node_parent_weak)));
-            children.insert(pos + i, Rc::clone(new_node));
-        }
-    }
-}
-
-// Plain <template> contents are inert; structural directives expand them explicitly.
-fn children_for_traversal(handle: &Handle) -> Vec<Handle> {
-    if let NodeData::Element {
-        name,
-        template_contents,
-        ..
-    } = &handle.data
-        && name.local.as_ref() == "template"
-        && template_contents.borrow().is_some()
-    {
-        return Vec::new();
-    }
-    handle.children.borrow().iter().cloned().collect()
-}
-
 fn render_targets(node: &Handle, engine: &mut Engine) -> Result<Vec<Handle>> {
     let mut rendered = Vec::new();
-    let mut if_chain = IfChain::default();
 
-    for target in expand_targets(node) {
-        if take_v_pre(&target) {
-            if_chain.reset();
-            rendered.push(target);
-            continue;
+    walk_siblings(expand_targets(node), engine, |node, placement| {
+        match placement {
+            Placement::Keep => rendered.push(node),
+            Placement::Drop => {}
+            Placement::Replace(nodes) => rendered.extend(nodes),
         }
-
-        if is_non_whitespace_text_node(&target) {
-            if_chain.reset();
-        }
-
-        match apply_directives(&target, engine, &mut if_chain)? {
-            Some(nodes) => rendered.extend(nodes),
-            None if traverse(&target, engine)? => rendered.push(target),
-            None => {}
-        }
-    }
+        Ok(())
+    })?;
 
     Ok(rendered)
 }
@@ -662,10 +420,10 @@ fn apply_directives(
         return Ok(None);
     }
 
-    let directive_if = find_and_remove_directive(attrs, "v-if");
-    let directive_else_if = find_and_remove_directive(attrs, "v-else-if");
-    let directive_else = find_and_remove_directive(attrs, "v-else");
-    let directive_for = find_and_remove_directive(attrs, "v-for");
+    let directive_if = take_attribute(attrs, "v-if");
+    let directive_else_if = take_attribute(attrs, "v-else-if");
+    let directive_else = take_attribute(attrs, "v-else");
+    let directive_for = take_attribute(attrs, "v-for");
     let invalid_directive = |directive, kind, expression| Error::InvalidDirective {
         directive,
         kind,
@@ -695,9 +453,9 @@ fn apply_directives(
                 Some(expr),
             ));
         }
-        if_chain.active = true;
-        if_chain.matched = engine.eval_bool(&expr).unwrap_or(false);
-        return Ok(Some(if if_chain.matched {
+        let matched = engine.eval_bool(&expr).unwrap_or(false);
+        if_chain.set_matched(matched);
+        return Ok(Some(if matched {
             render_targets(node, engine)?
         } else {
             Vec::new()
@@ -713,18 +471,19 @@ fn apply_directives(
                 Some(expr),
             ));
         }
-        if !if_chain.active {
+        if !if_chain.is_open() {
             return Err(invalid_directive(
                 Directive::ElseIf,
                 DirectiveErrorKind::MissingAdjacentConditional,
                 Some(expr),
             ));
         }
-        if if_chain.matched {
+        if if_chain.has_matched() {
             return Ok(Some(Vec::new()));
         }
-        if_chain.matched = engine.eval_bool(&expr).unwrap_or(false);
-        return Ok(Some(if if_chain.matched {
+        let matched = engine.eval_bool(&expr).unwrap_or(false);
+        if_chain.set_matched(matched);
+        return Ok(Some(if matched {
             render_targets(node, engine)?
         } else {
             Vec::new()
@@ -740,18 +499,19 @@ fn apply_directives(
                 Some(expr),
             ));
         }
-        if !if_chain.active {
+        if !if_chain.is_open() {
             return Err(invalid_directive(
                 Directive::Else,
                 DirectiveErrorKind::MissingAdjacentConditional,
                 None,
             ));
         }
-        if_chain.active = false;
-        return Ok(Some(if if_chain.matched {
+        // `v-else` ends the chain either way, so anything after it starts fresh.
+        let already_matched = if_chain.has_matched();
+        if_chain.reset();
+        return Ok(Some(if already_matched {
             Vec::new()
         } else {
-            if_chain.matched = true;
             render_targets(node, engine)?
         }));
     }
@@ -778,54 +538,61 @@ fn render_for(node: &Handle, engine: &mut Engine, expr: &str) -> Result<Vec<Hand
         expression: Some(expr.to_string()),
     })?;
 
+    // The iterable is evaluated in the enclosing scope, before the loop scope
+    // is pushed.
+    let iterable = match engine.eval_expr(for_expr.iter.trim()) {
+        Ok(iterable) => iterable,
+        Err(_) => return Ok(Vec::new()),
+    };
+
+    // One scope for the whole loop: each iteration rebinds it instead of
+    // installing and tearing down a fresh one.
+    engine.enter_scope().map_err(|err| Error::Internal {
+        message: format!("failed to manage JavaScript scope: {err}"),
+    })?;
+    let rendered = render_for_iterations(node, engine, &for_expr, iterable);
+    engine.exit_scope();
+    rendered
+}
+
+fn render_for_iterations(
+    node: &Handle,
+    engine: &mut Engine,
+    for_expr: &ForExpr,
+    iterable: JsValue,
+) -> Result<Vec<Handle>> {
     let indent_opt = get_indent(node);
     let mut result_nodes = Vec::new();
     let mut render_iteration = |engine: &mut Engine, slots: &[JsValue]| -> Result<()> {
-        engine.enter_scope().map_err(|err| Error::Internal {
-            message: format!("failed to manage JavaScript scope: {err}"),
-        })?;
-
-        let result = if engine.bind_for_slots(&for_expr.binding, slots) {
+        if engine.bind_for_slots(&for_expr.binding, slots) {
             render_for_item(node, engine, &indent_opt, &mut result_nodes)
         } else {
             Ok(())
-        };
-
-        engine.exit_scope();
-        result
-    };
-
-    let iterable = match engine.eval_expr(for_expr.iter.trim()) {
-        Ok(iterable) => iterable,
-        Err(_) => return Ok(result_nodes),
+        }
     };
 
     match iterable.variant() {
         JsVariant::Object(obj) if obj.is_array() => {
-            let Some(length) = array_length(engine, &obj) else {
+            let Some(length) = engine.array_length(&obj) else {
                 return Ok(result_nodes);
             };
             for (idx, item_idx) in (0..length).enumerate() {
-                let item = obj
-                    .get(item_idx, &mut engine.context)
-                    .unwrap_or_else(|_| JsValue::undefined());
+                let item = engine.get_prop(&obj, item_idx);
                 render_iteration(engine, &[item, JsValue::new(idx)])?;
             }
         }
         JsVariant::Object(obj) => {
-            if let Some(items) = iterable_values(engine, iterable.clone()) {
+            if let Some(items) = engine.iterable_values(iterable.clone()) {
                 for (idx, item) in items.into_iter().enumerate() {
                     render_iteration(engine, &[item, JsValue::new(idx)])?;
                 }
             } else {
-                let keys = object_keys(engine, iterable.clone());
+                let keys = engine.object_keys(iterable.clone());
                 for (idx, key) in keys.into_iter().enumerate() {
                     let Some(key_string) = key.as_string() else {
                         continue;
                     };
-                    let value = obj
-                        .get(key_string.clone(), &mut engine.context)
-                        .unwrap_or(JsValue::undefined());
+                    let value = engine.get_prop(&obj, key_string.clone());
                     render_iteration(engine, &[value, key, JsValue::new(idx)])?;
                 }
             }
@@ -844,54 +611,6 @@ fn render_for(node: &Handle, engine: &mut Engine, expr: &str) -> Result<Vec<Hand
     }
 
     Ok(result_nodes)
-}
-
-fn array_values(engine: &mut Engine, obj: &boa_engine::object::JsObject) -> Vec<JsValue> {
-    let Some(length) = array_length(engine, obj) else {
-        return Vec::new();
-    };
-
-    (0..length)
-        .map(|idx| {
-            obj.get(idx, &mut engine.context)
-                .unwrap_or_else(|_| JsValue::undefined())
-        })
-        .collect()
-}
-
-fn array_length(engine: &mut Engine, obj: &boa_engine::object::JsObject) -> Option<u64> {
-    JsArray::from_object(obj.clone())
-        .ok()?
-        .length(&mut engine.context)
-        .ok()
-}
-
-fn object_keys(engine: &mut Engine, value: JsValue) -> Vec<JsValue> {
-    engine
-        .eval_with_temp_val(value, |temp_ref| {
-            format!("Object.keys(globalThis[{temp_ref}])")
-        })
-        .ok()
-        .and_then(|keys| keys.as_object().map(|obj| array_values(engine, &obj)))
-        .unwrap_or_default()
-}
-
-fn iterable_values(engine: &mut Engine, value: JsValue) -> Option<Vec<JsValue>> {
-    let value = engine
-        .eval_with_temp_val(value, |temp_ref| {
-            format!(
-                "let value = globalThis[{temp_ref}]; \
-                 let iterator = value == null ? undefined : value[Symbol.iterator]; \
-                 typeof iterator === 'function' ? Array.from(value) : null"
-            )
-        })
-        .ok()?;
-
-    match value.variant() {
-        JsVariant::Null | JsVariant::Undefined => None,
-        JsVariant::Object(obj) if obj.is_array() => Some(array_values(engine, &obj)),
-        _ => None,
-    }
 }
 
 fn parse_for_expr(engine: &mut Engine, expr: &str) -> Option<ForExpr> {
@@ -968,38 +687,27 @@ fn render_for_item(
         nodes.push(node);
     };
 
-    let mut if_chain = IfChain::default();
-
-    for (target_idx, target) in targets.into_iter().enumerate() {
-        if take_v_pre(&target) {
-            if_chain.reset();
-            let should_indent = target_idx > 0 && !iteration_nodes.is_empty();
-            push_node(&mut iteration_nodes, target, should_indent);
-            continue;
-        }
-
-        if is_non_whitespace_text_node(&target) {
-            if_chain.reset();
-        }
-
-        let replacement = apply_directives(&target, engine, &mut if_chain)?;
-
-        match replacement {
-            Some(new_nodes) => {
-                for (idx, new_node) in new_nodes.into_iter().enumerate() {
+    // Every target after the first starts a fresh line, so it needs the indent
+    // the original `v-for` node sat at.
+    let mut target_idx = 0;
+    walk_siblings(targets, engine, |node, placement| {
+        match placement {
+            Placement::Keep => {
+                let should_indent = target_idx > 0 && !iteration_nodes.is_empty();
+                push_node(&mut iteration_nodes, node, should_indent);
+            }
+            Placement::Drop => {}
+            Placement::Replace(nodes) => {
+                for (idx, new_node) in nodes.into_iter().enumerate() {
                     let should_indent =
                         (target_idx > 0 && idx == 0 && !iteration_nodes.is_empty()) || idx > 0;
                     push_node(&mut iteration_nodes, new_node, should_indent);
                 }
             }
-            None => {
-                if traverse(&target, engine)? {
-                    let should_indent = target_idx > 0 && !iteration_nodes.is_empty();
-                    push_node(&mut iteration_nodes, target, should_indent);
-                }
-            }
         }
-    }
+        target_idx += 1;
+        Ok(())
+    })?;
 
     if !iteration_nodes.is_empty() {
         if !result_nodes.is_empty()
@@ -1011,209 +719,4 @@ fn render_for_item(
     }
 
     Ok(())
-}
-
-fn expand_targets(node: &Handle) -> Vec<Handle> {
-    if let NodeData::Element {
-        template_contents, ..
-    } = &node.data
-        && let Some(tc) = template_contents.borrow().as_ref()
-    {
-        let count_spaces = |s: &String| s.chars().filter(|c| *c == ' ').count();
-        let template_indent = get_indent(node).as_ref().map(count_spaces).unwrap_or(0);
-        let first_child_indent = tc
-            .children
-            .borrow()
-            .iter()
-            .find(|c| !is_whitespace_text_node(c))
-            .and_then(get_indent)
-            .as_ref()
-            .map(count_spaces)
-            .unwrap_or(0);
-
-        let indent_adjustment = template_indent as isize - first_child_indent as isize;
-
-        return tc
-            .children
-            .borrow()
-            .iter()
-            .filter(|c| !is_whitespace_text_node(c))
-            .map(|c| {
-                let cloned = clone_node(c);
-                cloned.parent.take();
-                if indent_adjustment != 0 {
-                    adjust_indent_in_subtree(&cloned, indent_adjustment);
-                }
-                cloned
-            })
-            .collect();
-    }
-
-    let cloned = clone_node(node);
-    cloned.parent.take();
-    vec![cloned]
-}
-
-fn find_and_remove_directive(
-    attrs: &RefCell<Vec<html5ever::Attribute>>,
-    name: &str,
-) -> Option<String> {
-    let mut attrs_mut = attrs.borrow_mut();
-    let pos = attrs_mut
-        .iter()
-        .position(|a| a.name.local.as_ref() == name)?;
-    Some(attrs_mut.remove(pos).value.to_string())
-}
-
-fn clone_node(node: &Handle) -> Handle {
-    fn clone_children(from: &Handle, to: &Handle) {
-        for child in from.children.borrow().iter() {
-            let cloned_child = clone_node(child);
-            cloned_child.parent.set(Some(Rc::downgrade(to)));
-            to.children.borrow_mut().push(cloned_child);
-        }
-    }
-
-    match &node.data {
-        NodeData::Document => {
-            let cloned = Node::new(NodeData::Document);
-            clone_children(node, &cloned);
-            cloned
-        }
-        NodeData::Doctype {
-            name,
-            public_id,
-            system_id,
-        } => Node::new(NodeData::Doctype {
-            name: name.clone(),
-            public_id: public_id.clone(),
-            system_id: system_id.clone(),
-        }),
-        NodeData::Text { contents } => Node::new(NodeData::Text {
-            contents: RefCell::new(contents.borrow().clone()),
-        }),
-        NodeData::Comment { contents } => Node::new(NodeData::Comment {
-            contents: contents.clone(),
-        }),
-        NodeData::Element {
-            name,
-            attrs,
-            template_contents,
-            mathml_annotation_xml_integration_point,
-        } => {
-            let cloned_template_contents = template_contents.borrow().as_ref().map(|tc| {
-                let clone = Node::new(NodeData::Document);
-                clone_children(tc, &clone);
-                clone
-            });
-
-            let cloned = Node::new(NodeData::Element {
-                name: name.clone(),
-                attrs: RefCell::new(attrs.borrow().clone()),
-                template_contents: RefCell::new(cloned_template_contents),
-                mathml_annotation_xml_integration_point: *mathml_annotation_xml_integration_point,
-            });
-            clone_children(node, &cloned);
-            cloned
-        }
-        NodeData::ProcessingInstruction { target, contents } => {
-            Node::new(NodeData::ProcessingInstruction {
-                target: target.clone(),
-                contents: contents.clone(),
-            })
-        }
-    }
-}
-
-fn get_indent(node: &Handle) -> Option<String> {
-    let parent_weak = node.parent.take()?;
-    node.parent.set(Some(Weak::clone(&parent_weak)));
-    let parent = parent_weak.upgrade()?;
-
-    let children = parent.children.borrow();
-    let pos = children.iter().position(|c| Rc::ptr_eq(c, node))?;
-
-    if pos == 0 {
-        return None;
-    }
-
-    if let NodeData::Text { contents } = &children[pos - 1].data {
-        let text = contents.borrow();
-        if let Some(last_nl) = text.rfind('\n') {
-            let indent_text = &text[last_nl..];
-            return Some(
-                indent_text
-                    .chars()
-                    .map(|c| if c == '\n' { '\n' } else { ' ' })
-                    .collect(),
-            );
-        }
-    }
-    None
-}
-
-fn adjust_indent_in_subtree(node: &Handle, indent_adjustment: isize) {
-    if let NodeData::Text { contents } = &node.data {
-        let text = contents.borrow().to_string();
-        let adjusted = adjust_text_indent(&text, indent_adjustment);
-        contents.replace(StrTendril::from_str(&adjusted).unwrap());
-    }
-
-    if let NodeData::Element {
-        template_contents, ..
-    } = &node.data
-        && let Some(tc) = template_contents.borrow().as_ref()
-    {
-        for child in tc.children.borrow().iter() {
-            adjust_indent_in_subtree(child, indent_adjustment);
-        }
-    } else {
-        for child in node.children.borrow().iter() {
-            adjust_indent_in_subtree(child, indent_adjustment);
-        }
-    }
-}
-
-fn adjust_text_indent(text: &str, adjustment: isize) -> String {
-    if adjustment == 0 {
-        return text.to_string();
-    }
-
-    let mut result = String::new();
-    for (i, line) in text.split('\n').enumerate() {
-        if i == 0 {
-            result.push_str(line);
-        } else {
-            result.push('\n');
-
-            let spaces = line.chars().take_while(|c| *c == ' ').count();
-            let new_spaces = (spaces as isize + adjustment).max(0) as usize;
-            let rest = &line[spaces..];
-            result.push_str(&" ".repeat(new_spaces));
-            result.push_str(rest);
-        }
-    }
-    result
-}
-
-fn create_text_node(text: &str) -> Handle {
-    Node::new(NodeData::Text {
-        contents: RefCell::new(StrTendril::from_str(text).unwrap()),
-    })
-}
-
-fn is_whitespace_text_node(node: &Handle) -> bool {
-    if let NodeData::Text { contents } = &node.data {
-        contents.borrow().chars().all(|c| c.is_whitespace())
-    } else {
-        false
-    }
-}
-
-fn is_non_whitespace_text_node(node: &Handle) -> bool {
-    if let NodeData::Text { contents } = &node.data {
-        contents.borrow().chars().any(|c| !c.is_whitespace())
-    } else {
-        false
-    }
 }

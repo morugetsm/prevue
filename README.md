@@ -57,6 +57,34 @@ fn main() -> prevue::Result<()> {
 ```
 
 
+## Rendering repeatedly
+
+`render` builds a fresh JavaScript engine on every call. `Renderer` keeps one
+alive across renders and caches compiled expressions:
+
+```rust
+use prevue::Renderer;
+use serde_json::json;
+
+let mut renderer = Renderer::new()?;
+let template = "<p>{{ name }}</p>";
+
+for name in ["Ada", "Grace"] {
+    println!("{}", renderer.render(template, json!({ "name": name }))?);
+}
+```
+
+Small templates render 5-25x faster this way; large loop-heavy ones barely
+change, since the engine setup was already a rounding error there.
+
+Render data and setup script declarations do not carry over between renders, but
+globals a template creates deliberately do — `var` inside `{{ }}`, an undeclared
+assignment, a write to `globalThis`, a mutated built-in. Use a fresh `Renderer`
+when you need a clean realm.
+
+`Renderer` is not `Send`; use one per thread.
+
+
 ## Features
 
 | Syntax | Status | Notes |

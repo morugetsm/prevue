@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::borrow::Cow;
 
 use html5ever::{
     driver::ParseOpts,
@@ -26,7 +26,19 @@ struct Mask {
 
 const MASK_SUFFIX: &str = "\u{E001}";
 
-fn mask_mustaches(template: &str) -> (String, Mask) {
+fn mask_mustaches(template: &str) -> (Cow<'_, str>, Mask) {
+    // Every branch below exists only to tell a real `{{` apart from one inside
+    // markup, a comment or raw text. With no `{{` at all the result is the input.
+    if !template.contains("{{") {
+        return (
+            Cow::Borrowed(template),
+            Mask {
+                prefix: String::new(),
+                entries: Vec::new(),
+            },
+        );
+    }
+
     let prefix = unique_mask_prefix(template);
     let mut masked = String::with_capacity(template.len());
     let mut entries = Vec::new();
@@ -80,7 +92,7 @@ fn mask_mustaches(template: &str) -> (String, Mask) {
         cursor += ch.len_utf8();
     }
 
-    (masked, Mask { prefix, entries })
+    (Cow::Owned(masked), Mask { prefix, entries })
 }
 
 fn unique_mask_prefix(template: &str) -> String {
@@ -105,7 +117,7 @@ fn restore_mustaches(handle: &Handle, mask: &Mask) {
             restore_text(&text, mask)
         };
         if let Some(restored) = restored {
-            contents.replace(StrTendril::from_str(&restored).unwrap());
+            contents.replace(StrTendril::from(restored.as_str()));
         }
     }
 
