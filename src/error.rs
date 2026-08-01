@@ -15,6 +15,8 @@ pub enum Directive {
     Text,
     /// `v-html`
     Html,
+    /// `v-bind`, including the `:` shorthand
+    Bind,
 }
 
 impl fmt::Display for Directive {
@@ -26,6 +28,7 @@ impl fmt::Display for Directive {
             Self::For => f.write_str("v-for"),
             Self::Text => f.write_str("v-text"),
             Self::Html => f.write_str("v-html"),
+            Self::Bind => f.write_str("v-bind"),
         }
     }
 }
@@ -41,6 +44,8 @@ pub enum DirectiveErrorKind {
     MissingAdjacentConditional,
     /// The directive expression could not be parsed as valid directive syntax.
     InvalidExpression,
+    /// The directive was given a modifier it does not define.
+    UnknownModifier,
 }
 
 impl fmt::Display for DirectiveErrorKind {
@@ -50,6 +55,7 @@ impl fmt::Display for DirectiveErrorKind {
             Self::UnexpectedExpression => f.write_str("unexpected expression"),
             Self::MissingAdjacentConditional => f.write_str("missing adjacent conditional"),
             Self::InvalidExpression => f.write_str("invalid expression"),
+            Self::UnknownModifier => f.write_str("unknown modifier"),
         }
     }
 }

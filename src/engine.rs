@@ -447,7 +447,7 @@ impl Engine {
 
     pub fn eval_fmt(&mut self, code: &str) -> Option<String> {
         let value = self.eval_expr(code).ok()?;
-        fmt_text(&value, &mut self.context)
+        to_display_string(&value, self)
     }
 
     pub fn stringify(&mut self, value: &JsValue) -> Option<String> {
@@ -491,49 +491,65 @@ impl Engine {
     }
 }
 
-fn fmt_text(value: &JsValue, context: &mut Context) -> Option<String> {
+/// Vue's `toDisplayString`, which is what `{{ }}` renders with.
+fn to_display_string(value: &JsValue, engine: &mut Engine) -> Option<String> {
     match value.variant() {
         JsVariant::Null | JsVariant::Undefined => None,
-        JsVariant::Boolean(val) => Some(val.to_string()),
-        JsVariant::Integer32(val) => Some(val.to_string()),
-        JsVariant::String(val) => Some(val.to_std_string_escaped()),
-        JsVariant::Object(_) => {
-            let json = value.to_json(context).ok()??;
-            Some(fmt_json(&json))
-        }
-        _ => Some(value.display().to_string()),
+        JsVariant::String(text) => Some(text.to_std_string_escaped()),
+        JsVariant::Boolean(flag) => Some(flag.to_string()),
+        JsVariant::Integer32(number) => Some(number.to_string()),
+        // Floats, BigInt, symbols and objects all have JavaScript-specific
+        // spellings, so they go through the engine rather than Rust's.
+        _ => engine
+            .eval_with_temp_val(value.clone(), |temp_ref| {
+                format!("{DISPLAY_STRING_JS}(globalThis[{temp_ref}])")
+            })
+            .ok()?
+            .as_string()
+            .map(|text| text.to_std_string_escaped()),
     }
 }
 
-fn fmt_json(val: &JsonValue) -> String {
-    match val {
-        JsonValue::Null => "null".to_string(),
-        JsonValue::Bool(b) => b.to_string(),
-        JsonValue::Number(n) => n.to_string(),
-        JsonValue::String(s) => js_string_literal(s),
-        JsonValue::Array(arr) => {
-            if arr.is_empty() {
-                "[]".to_string()
-            } else {
-                format!(
-                    "[ {} ]",
-                    arr.iter().map(fmt_json).collect::<Vec<_>>().join(", ")
-                )
+// The tail of `toDisplayString`, ported as JavaScript so `JSON.stringify` keeps
+// its own cycle detection and the replacer reaches nested values.
+const DISPLAY_STRING_JS: &str = r#"(function (value) {
+    const stringifySymbol = (v, i = '') =>
+        typeof v === 'symbol' ? `Symbol(${v.description ?? i})` : v;
+
+    const replacer = (_key, val) => {
+        if (val instanceof Map) {
+            const entries = {};
+            let index = 0;
+            for (const [key, item] of val.entries()) {
+                entries[stringifySymbol(key, index++) + ' =>'] = item;
             }
+            return { [`Map(${val.size})`]: entries };
         }
-        JsonValue::Object(obj) => {
-            if obj.is_empty() {
-                "{}".to_string()
-            } else {
-                let items: Vec<String> = obj
-                    .iter()
-                    .map(|(k, v)| format!("{}: {}", js_string_literal(k), fmt_json(v)))
-                    .collect();
-                format!("{{ {} }}", items.join(", "))
-            }
+        if (val instanceof Set) {
+            return { [`Set(${val.size})`]: [...val.values()].map((v) => stringifySymbol(v)) };
         }
-    }
-}
+        if (typeof val === 'symbol') {
+            return stringifySymbol(val);
+        }
+        if (val !== null && typeof val === 'object' && !Array.isArray(val)
+            && Object.prototype.toString.call(val) !== '[object Object]') {
+            return String(val);
+        }
+        return val;
+    };
+
+    if (typeof value === 'string') return value;
+    if (value === null || value === undefined) return '';
+
+    // An array is always JSON. Other objects are too, unless they spell
+    // themselves out — a Date, a RegExp, anything with its own toString.
+    const asJson = Array.isArray(value)
+        || (typeof value === 'object'
+            && (value.toString === Object.prototype.toString
+                || typeof value.toString !== 'function'));
+
+    return asJson ? JSON.stringify(value, replacer, 2) : String(value);
+})"#;
 
 fn collect_binding_names(
     binding: &Binding,

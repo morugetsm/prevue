@@ -1,6 +1,7 @@
 mod helper;
 
 use helper::assert_render_body_eq;
+use prevue::render;
 use serde_json::json;
 
 // === Basic Behavior ===
@@ -298,7 +299,11 @@ fn mustache_array() {
         json!({ "list": [1, 2, 3] }),
         r#"<div>
             <p>Hello, world!</p>
-            <div>[ 1, 2, 3 ]</div>
+            <div>[
+  1,
+  2,
+  3
+]</div>
         </div>"#,
     );
 }
@@ -320,7 +325,10 @@ fn mustache_object() {
         }),
         r#"<div>
             <p>Hello, world!</p>
-            <div>{ "name": "Alice", "age": 21 }</div>
+            <div>{
+  "name": "Alice",
+  "age": 21
+}</div>
             <div>Alice</div>
             <div>21</div>
         </div>"#,
@@ -343,8 +351,17 @@ fn mustache_json_string_escaping() {
             },
         }),
         r#"<div>
-            <p>[ "a\"b", "c\\d", "line\nbreak", "&lt;tag&gt;" ]</p>
-            <p>{ "a\"b": "c\\d", "line\nkey": "line\nvalue", "html": "&lt;span&gt;" }</p>
+            <p>[
+  "a\"b",
+  "c\\d",
+  "line\nbreak",
+  "&lt;tag&gt;"
+]</p>
+            <p>{
+  "a\"b": "c\\d",
+  "line\nkey": "line\nvalue",
+  "html": "&lt;span&gt;"
+}</p>
         </div>"#,
     );
 }
@@ -422,7 +439,10 @@ fn data_alias_non_object() {
     assert_render_body_eq!(
         r#"<div>{{ $ }}</div>"#,
         json!(["a", "b"]),
-        r#"<div>[ "a", "b" ]</div>"#,
+        r#"<div>[
+  "a",
+  "b"
+]</div>"#,
     );
 }
 
@@ -548,5 +568,87 @@ fn mustache_isolation() {
             <h1>1</h1>
             <h2></h2>
         </div>"#,
+    );
+}
+
+// === toDisplayString ===
+//
+// `{{ }}` follows Vue's `toDisplayString`, which is not plain `String(v)`:
+// arrays and plain objects become indented JSON, and anything that spells
+// itself out is left to do so.
+
+#[test]
+fn mustache_object_is_indented_json() {
+    assert_render_body_eq!(
+        r#"<div>{{ o }}</div>"#,
+        json!({ "o": { "a": 1 } }),
+        "<div>{\n  \"a\": 1\n}</div>",
+    );
+}
+
+#[test]
+fn mustache_date_spells_itself() {
+    // A Date defines its own toString, so it is not turned into JSON.
+    let out = render(r#"<p>{{ new Date(0) }}</p>"#, json!({})).unwrap();
+    assert!(out.contains("1970"), "{out}");
+    assert!(!out.contains('{'), "{out}");
+}
+
+#[test]
+fn mustache_regexp_spells_itself() {
+    assert_render_body_eq!(r#"<p>{{ /ab+c/g }}</p>"#, json!({}), "<p>/ab+c/g</p>");
+}
+
+#[test]
+fn mustache_custom_to_string_wins() {
+    assert_render_body_eq!(
+        r#"<p>{{ ({ toString() { return 'CUSTOM' } }) }}</p>"#,
+        json!({}),
+        "<p>CUSTOM</p>",
+    );
+}
+
+#[test]
+fn mustache_map_and_set() {
+    assert_render_body_eq!(
+        r#"<p>{{ new Map([['x', 1]]) }}</p><p>{{ new Set(['a']) }}</p>"#,
+        json!({}),
+        "<p>{\n  \"Map(1)\": {\n    \"x =&gt;\": 1\n  }\n}</p>\
+         <p>{\n  \"Set(1)\": [\n    \"a\"\n  ]\n}</p>",
+    );
+}
+
+#[test]
+fn mustache_symbol_is_bare_at_top_level_and_quoted_when_nested() {
+    // A top-level symbol never reaches the replacer, so it has no quotes.
+    assert_render_body_eq!(
+        r#"<p>{{ Symbol('houu') }}</p><p>{{ ({ s: Symbol('houu') }) }}</p>"#,
+        json!({}),
+        "<p>Symbol(houu)</p><p>{\n  \"s\": \"Symbol(houu)\"\n}</p>",
+    );
+}
+
+#[test]
+fn mustache_bigint_is_a_plain_number() {
+    assert_render_body_eq!(r#"<p>{{ 10n }}</p>"#, json!({}), "<p>10</p>");
+}
+
+#[test]
+fn mustache_cycle_renders_nothing() {
+    assert_render_body_eq!(
+        r#"<p>{{ (() => { const o = {}; o.self = o; return o })() }}</p>"#,
+        json!({}),
+        "<p></p>",
+    );
+}
+
+#[test]
+fn mustache_object_inside_for_keeps_its_indentation() {
+    // `v-for` re-indents cloned subtrees before interpolation runs, so the JSON
+    // must come through untouched.
+    assert_render_body_eq!(
+        r#"<ul><li v-for="n in [1]">{{ ({ a: n }) }}</li></ul>"#,
+        json!({}),
+        "<ul><li>{\n  \"a\": 1\n}</li></ul>",
     );
 }

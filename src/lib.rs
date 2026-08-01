@@ -12,7 +12,7 @@ mod error;
 mod indent;
 mod interpolation;
 mod template;
-use attr_value::{AttrEdits, normalize_bound_attribute, validate_attribute_name};
+use attr_value::{AttrEdits, apply_modifiers, normalize_bound_attribute, validate_attribute_name};
 use dom::{
     clone_node, create_text_node, expand_targets, is_element, is_inert_template,
     is_non_whitespace_text_node, is_raw_text_element, is_whitespace_text_node, parse_html_fragment,
@@ -339,8 +339,10 @@ fn render_content(handle: &Handle, engine: &mut Engine) -> Result<Walk> {
 
             let mut action = Walk::Children;
             let mut edits = AttrEdits::default();
+            let mut bound: Vec<(usize, String)> = Vec::new();
+            let attrs_ref = attrs.borrow();
 
-            for (i, attr) in attrs.borrow().iter().enumerate() {
+            for (i, attr) in attrs_ref.iter().enumerate() {
                 let name_ref: &str = attr.name.local.as_ref();
 
                 if name_ref == "v-text" {
@@ -389,47 +391,52 @@ fn render_content(handle: &Handle, engine: &mut Engine) -> Result<Walk> {
                     .or_else(|| name_ref.strip_prefix("v-bind:"))
                 {
                     let value_expr = attr.value.trim();
+                    let (arg, modifiers) = split_modifiers(arg_raw);
 
-                    if arg_raw.starts_with('[') && arg_raw.ends_with(']') {
-                        if value_expr.is_empty() {
+                    let name = match dynamic_arg(arg) {
+                        // A dynamic name has no expression to fall back on.
+                        Some(_) if value_expr.is_empty() => {
                             edits.remove(i);
                             continue;
                         }
-                        let inner = &arg_raw[1..arg_raw.len() - 1];
-                        match (engine.eval_str(inner), engine.eval_str(value_expr)) {
-                            (Some(resolved), Some(_)) if resolved.is_empty() => edits.remove(i),
-                            (Some(resolved), Some(value)) => {
-                                validate_attribute_name(&resolved)?;
-                                edits.set(i, resolved, value);
-                            }
-                            _ => edits.remove(i),
-                        }
-                    } else {
-                        let target = if value_expr.is_empty() {
-                            arg_raw
-                        } else {
-                            value_expr
-                        };
-
-                        let value = engine
-                            .eval_expr(target)
-                            .ok()
-                            .and_then(|value| normalize_bound_attribute(engine, arg_raw, &value));
-                        match (matches!(arg_raw, "class" | "style"), value) {
-                            (true, Some(value)) => {
-                                edits.add(arg_raw.to_string(), attr.name.clone(), value);
+                        Some(inner) => match engine.eval_str(inner) {
+                            Some(name) if !name.is_empty() => name,
+                            _ => {
                                 edits.remove(i);
+                                continue;
                             }
-                            (false, Some(value)) => {
-                                validate_attribute_name(arg_raw)?;
-                                edits.set(i, arg_raw.to_string(), value);
-                            }
-                            _ => edits.remove(i),
+                        },
+                        None => arg.to_string(),
+                    };
+                    let name = apply_modifiers(name, modifiers)?;
+
+                    let target = if value_expr.is_empty() {
+                        arg
+                    } else {
+                        value_expr
+                    };
+
+                    let value = engine
+                        .eval_expr(target)
+                        .ok()
+                        .and_then(|value| normalize_bound_attribute(engine, &name, &value));
+                    match (matches!(name.as_str(), "class" | "style"), value) {
+                        (true, Some(value)) => {
+                            edits.add(name, attr.name.clone(), value);
+                            edits.remove(i);
                         }
+                        (false, Some(value)) => {
+                            validate_attribute_name(&name)?;
+                            shadow_duplicates(&attrs_ref, &bound, i, &name, &mut edits);
+                            bound.push((i, name.clone()));
+                            edits.set(i, name, value);
+                        }
+                        _ => edits.remove(i),
                     }
                 }
             }
 
+            drop(attrs_ref);
             edits.apply(attrs);
             Ok(action)
         }
@@ -442,6 +449,51 @@ fn render_content(handle: &Handle, engine: &mut Engine) -> Result<Walk> {
             Ok(Walk::Children)
         }
         _ => Ok(Walk::Children),
+    }
+}
+
+/// Split `view-box.camel`, skipping a dynamic argument's brackets first.
+fn split_modifiers(arg: &str) -> (&str, &str) {
+    let from = if arg.starts_with('[') {
+        arg.find(']').map_or(arg.len(), |end| end + 1)
+    } else {
+        0
+    };
+
+    match arg[from..].find('.') {
+        Some(offset) => arg.split_at(from + offset),
+        None => (arg, ""),
+    }
+}
+
+/// The expression inside `:[key]`, or `None` for a literal argument.
+fn dynamic_arg(arg: &str) -> Option<&str> {
+    arg.strip_prefix('[')?.strip_suffix(']')
+}
+
+/// Leave a binding as the only source for its name. `bound` holds only earlier
+/// bindings, so two of them cannot delete each other and lose both values.
+fn shadow_duplicates(
+    attrs: &[html5ever::Attribute],
+    bound: &[(usize, String)],
+    binding: usize,
+    name: &str,
+    edits: &mut AttrEdits,
+) {
+    for (idx, attr) in attrs.iter().enumerate() {
+        let local: &str = attr.name.local.as_ref();
+        let is_binding =
+            local.starts_with(':') || local == "v-bind" || local.starts_with("v-bind:");
+
+        if idx != binding && local == name && !is_binding {
+            edits.remove(idx);
+        }
+    }
+
+    for (idx, resolved) in bound {
+        if resolved == name {
+            edits.remove(*idx);
+        }
     }
 }
 

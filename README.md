@@ -109,18 +109,18 @@ one is cheap.
 
 ## Features
 
-| Syntax | Status | Notes |
-|---|---|---|
-| `{{ }}` | ✅ | Text interpolation |
-| `v-bind`, `:attr` | ✅ | Attribute binding |
-| `v-if` | ✅ | Conditional rendering |
-| `v-else`, `v-else-if` | ✅ | Conditional branches |
-| `v-for` | ✅ | List rendering |
-| `v-text` | ✅ | Text replacement |
-| `v-html` | ✅ | Raw HTML replacement; inserted HTML is not compiled |
-| `v-pre` | ✅ | Skip rendering logic |
-| `<template>` | ✅ | Structural wrapper |
-| `<script type="prevue">` | ✅ | Render-order setup script |
+| Syntax | Notes |
+|---|---|
+| `{{ }}` | Text interpolation |
+| `v-bind`, `:attr` | Attribute binding |
+| `v-if` | Conditional rendering |
+| `v-else`, `v-else-if` | Conditional branches |
+| `v-for` | List rendering |
+| `v-text` | Text replacement |
+| `v-html` | Raw HTML replacement; inserted HTML is not compiled |
+| `v-pre` | Skip rendering logic |
+| `<template>` | Structural wrapper |
+| `<script type="prevue">` | Render-order setup script |
 
 
 ## Behavior Notes
@@ -129,8 +129,9 @@ one is cheap.
 
 This library uses [html5ever](https://github.com/servo/html5ever), which follows HTML5 spec strictly:
 
-- Attribute names are lowercased (for example, `:MyAttr` becomes `:myattr`).
+- Attribute names are lowercased (for example, `:MyAttr` becomes `:myattr`). Reach for `.camel` when the name needs its case back: `:view-box.camel` binds `viewBox`.
 - Dynamic binding names are lowercased, so `:[dynamicKey]` looks up `dynamickey`.
+- A set boolean attribute is written as `disabled=""` rather than bare `disabled`, since the serializer always writes a value — HTML checks presence either way.
 - Output is serialized as a complete HTML document with `<html>`, `<head>`, and `<body>`.
 
 ### Data Scope

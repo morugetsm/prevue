@@ -1,7 +1,7 @@
 mod helper;
 
 use helper::assert_render_body_eq;
-use prevue::{Error, render};
+use prevue::{Directive, DirectiveErrorKind, Error, render};
 use serde_json::json;
 
 // === Basic Binding ===
@@ -248,27 +248,27 @@ fn bind_spread_literal() {
 }
 
 #[test]
-fn bind_spread_js_stringify() {
+fn bind_spread_drops_non_primitive() {
     assert_render_body_eq!(
         r#"<div>
         <span v-bind="{ attrs: { key: 'val' }, list: [1, 2] }">elem</span>
     </div>"#,
         json!({}),
         r#"<div>
-        <span attrs="[object Object]" list="1,2">elem</span>
+        <span>elem</span>
     </div>"#,
     );
 }
 
 #[test]
-fn bind_arg_js_stringify() {
+fn bind_arg_drops_non_primitive() {
     assert_render_body_eq!(
         r#"<div>
         <span :attrs="{ key: 'val' }" :list="[1, 2]">elem</span>
     </div>"#,
         json!({}),
         r#"<div>
-        <span attrs="[object Object]" list="1,2">elem</span>
+        <span>elem</span>
     </div>"#,
     );
 }
@@ -358,7 +358,7 @@ fn bind_spread_style() {
             "id": "title",
         }),
         r#"<div>
-        <p style="color: red; font-size: 12px; background: blue" id="title">elem</p>
+        <p style="color: red; font-size: 12px; background: blue;" id="title">elem</p>
     </div>"#,
     );
 }
@@ -415,7 +415,7 @@ fn bind_dynamic_space_error() {
 
 #[test]
 fn bind_dynamic_quote_name() {
-    assert_render_body_eq!(
+    let err = render(
         r#"<div>
         <p :[name]="value">elem</p>
     </div>"#,
@@ -423,10 +423,10 @@ fn bind_dynamic_quote_name() {
             "name": "quote\"name",
             "value": "ok",
         }),
-        r#"<div>
-        <p quote"name="ok">elem</p>
-    </div>"#,
-    );
+    )
+    .unwrap_err();
+
+    assert!(matches!(err, Error::InvalidAttributeName { name } if name == "quote\"name"));
 }
 
 #[test]
@@ -562,7 +562,7 @@ fn bind_spread_space_error() {
 
 #[test]
 fn bind_spread_quote_name() {
-    assert_render_body_eq!(
+    let err = render(
         r#"<div>
         <span v-bind="attrs">elem</span>
     </div>"#,
@@ -571,10 +571,10 @@ fn bind_spread_quote_name() {
                 "quote\"name": "value",
             },
         }),
-        r#"<div>
-        <span quote"name="value">elem</span>
-    </div>"#,
-    );
+    )
+    .unwrap_err();
+
+    assert!(matches!(err, Error::InvalidAttributeName { name } if name == "quote\"name"));
 }
 
 #[test]
@@ -660,4 +660,373 @@ fn bind_spread_gt_in_name() {
     .unwrap_err();
 
     assert!(matches!(err, Error::InvalidAttributeName { name } if name == "greater>name"));
+}
+
+// === Boolean Attributes ===
+
+#[test]
+fn bind_boolean_falsy_removed() {
+    assert_render_body_eq!(
+        r#"<div>
+        <button :disabled="no" :checked="nothing" :hidden="zero">b</button>
+    </div>"#,
+        json!({ "no": false, "nothing": null, "zero": 0 }),
+        r#"<div>
+        <button>b</button>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_boolean_truthy_present() {
+    // The empty string counts as present, which is the `readonly=""` idiom.
+    assert_render_body_eq!(
+        r#"<div>
+        <button :disabled="yes" :hidden="text" :multiple="one" :readonly="blank">b</button>
+    </div>"#,
+        json!({ "yes": true, "text": "no", "one": 1, "blank": "" }),
+        r#"<div>
+        <button disabled="" hidden="" multiple="" readonly="">b</button>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_boolean_non_primitive_removed() {
+    // Truthy in JavaScript, but rejected before the boolean rule runs.
+    assert_render_body_eq!(
+        r#"<div>
+        <button :disabled="list">b</button>
+    </div>"#,
+        json!({ "list": [] }),
+        r#"<div>
+        <button>b</button>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_boolean_via_spread() {
+    assert_render_body_eq!(
+        r#"<div>
+        <button v-bind="{ disabled: false, required: true }">b</button>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <button required="">b</button>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_boolean_via_dynamic_arg() {
+    assert_render_body_eq!(
+        r#"<div>
+        <button :[key]="no">b</button>
+    </div>"#,
+        json!({ "key": "disabled", "no": false }),
+        r#"<div>
+        <button>b</button>
+    </div>"#,
+    );
+}
+
+// === Non-Primitive Values ===
+
+#[test]
+fn bind_non_primitive_removed() {
+    assert_render_body_eq!(
+        r#"<div>
+        <span :a="obj" :b="list" :c="sym" :d="big" :e="fun">elem</span>
+    </div>"#,
+        json!({ "obj": { "k": 1 }, "list": [1, 2] }),
+        r#"<div>
+        <span>elem</span>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_dynamic_arg_non_primitive_removed() {
+    assert_render_body_eq!(
+        r#"<div>
+        <span :[key]="obj">elem</span>
+    </div>"#,
+        json!({ "key": "data-x", "obj": { "k": 1 } }),
+        r#"<div>
+        <span>elem</span>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_dynamic_arg_normalizes_class() {
+    assert_render_body_eq!(
+        r#"<div>
+        <p class="base" :[key]="{ active: true, hidden: false }">elem</p>
+    </div>"#,
+        json!({ "key": "class" }),
+        r#"<div>
+        <p class="base active">elem</p>
+    </div>"#,
+    );
+}
+
+// === Modifiers ===
+
+#[test]
+fn bind_camel_modifier() {
+    assert_render_body_eq!(
+        r#"<div>
+        <svg :view-box.camel="box"></svg>
+    </div>"#,
+        json!({ "box": "0 0 9 9" }),
+        r#"<div>
+        <svg viewBox="0 0 9 9"></svg>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_camel_modifier_on_dynamic_arg() {
+    assert_render_body_eq!(
+        r#"<div>
+        <svg :[key].camel="box"></svg>
+    </div>"#,
+        json!({ "key": "view-box", "box": "0 0 9 9" }),
+        r#"<div>
+        <svg viewBox="0 0 9 9"></svg>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_unknown_modifier_errors() {
+    let err = render(
+        r#"<div>
+        <span :foo.prop="value">elem</span>
+    </div>"#,
+        json!({ "value": "x" }),
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        err,
+        Error::InvalidDirective {
+            directive: Directive::Bind,
+            kind: DirectiveErrorKind::UnknownModifier,
+            expression: Some(name),
+        } if name == "prop"
+    ));
+}
+
+// === Static / Dynamic Collision ===
+
+#[test]
+fn bind_arg_shadows_static_attribute() {
+    assert_render_body_eq!(
+        r#"<div>
+        <a href="/fallback" :href="url">link</a>
+    </div>"#,
+        json!({ "url": "/real" }),
+        r#"<div>
+        <a href="/real">link</a>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_arg_shadows_static_attribute_that_precedes_it() {
+    assert_render_body_eq!(
+        r#"<div>
+        <a href="/before" :href="url" title="keep">link</a>
+    </div>"#,
+        json!({ "url": "/real" }),
+        r#"<div>
+        <a href="/real" title="keep">link</a>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_shadow_after_an_earlier_removal() {
+    // Queued removals land out of order here, and `apply` deletes back to front.
+    assert_render_body_eq!(
+        r#"<div>
+        <a href="/before" class="base" :class="{ on: true }" :href="url">link</a>
+    </div>"#,
+        json!({ "url": "/real" }),
+        r#"<div>
+        <a class="base on" href="/real">link</a>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_camel_modifier_shadows_static_attribute() {
+    assert_render_body_eq!(
+        r#"<div>
+        <svg viewBox="0 0 1 1" :view-box.camel="box"></svg>
+    </div>"#,
+        json!({ "box": "0 0 9 9" }),
+        r#"<div>
+        <svg viewBox="0 0 9 9"></svg>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_removed_binding_leaves_static_attribute() {
+    assert_render_body_eq!(
+        r#"<div>
+        <a href="/fallback" :href="missing">link</a>
+    </div>"#,
+        json!({ "missing": null }),
+        r#"<div>
+        <a href="/fallback">link</a>
+    </div>"#,
+    );
+}
+
+#[test]
+fn later_binding_wins_over_earlier_binding() {
+    // Neither may delete the other outright, or no href would survive.
+    assert_render_body_eq!(
+        r#"<div>
+        <a :href="first" v-bind:href="second">link</a>
+    </div>"#,
+        json!({ "first": "/first", "second": "/second" }),
+        r#"<div>
+        <a href="/second">link</a>
+    </div>"#,
+    );
+}
+
+#[test]
+fn later_binding_wins_across_argument_forms() {
+    assert_render_body_eq!(
+        r#"<div>
+        <a href="/static" :[key]="dynamic" :href="literal" v-bind:href="last">link</a>
+    </div>"#,
+        json!({
+            "key": "href",
+            "dynamic": "/dynamic",
+            "literal": "/literal",
+            "last": "/last",
+        }),
+        r#"<div>
+        <a href="/last">link</a>
+    </div>"#,
+    );
+}
+
+#[test]
+fn dropped_later_binding_leaves_the_earlier_one() {
+    assert_render_body_eq!(
+        r#"<div>
+        <a :href="url" v-bind:href="missing">link</a>
+    </div>"#,
+        json!({ "url": "/real", "missing": null }),
+        r#"<div>
+        <a href="/real">link</a>
+    </div>"#,
+    );
+}
+
+// === Style Merging ===
+//
+// Vue folds a static `style`, every array item and every object into one
+// declaration list, so a repeated property keeps its place but takes the newer
+// value instead of being emitted twice.
+
+#[test]
+fn bind_style_array_merges_duplicate_keys() {
+    assert_render_body_eq!(
+        r#"<div>
+        <p :style="[{ color: 'red' }, { color: 'blue' }]">elem</p>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <p style="color: blue;">elem</p>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_style_overrides_the_static_attribute() {
+    assert_render_body_eq!(
+        r#"<div>
+        <p style="color: red; margin: 0" :style="{ color: 'blue' }">elem</p>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <p style="color: blue; margin: 0;">elem</p>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_style_parses_string_items() {
+    assert_render_body_eq!(
+        r#"<div>
+        <p :style="['color: red; margin: 0', { color: 'blue' }]">elem</p>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <p style="color: blue; margin: 0;">elem</p>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_style_keeps_semicolons_inside_parentheses() {
+    assert_render_body_eq!(
+        r#"<div>
+        <p :style="['background: url(a;b); color: red']">elem</p>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <p style="background: url(a;b); color: red;">elem</p>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_style_drops_comments_and_non_primitives() {
+    assert_render_body_eq!(
+        r#"<div>
+        <p :style="['/* note */ color: red', { margin: [1, 2] }]">elem</p>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <p style="color: red;">elem</p>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_style_hyphenates_without_a_leading_dash() {
+    // Vue's `\B([A-Z])` leaves the first character alone.
+    assert_render_body_eq!(
+        r#"<div>
+        <p :style="{ MozTransform: 'none', fontSize: '1px', '--gap': '2px' }">elem</p>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <p style="moz-transform: none; font-size: 1px; --gap: 2px;">elem</p>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_apostrophe_in_attribute_name_errors() {
+    let err = render(
+        r#"<div>
+        <p :[name]="value">elem</p>
+    </div>"#,
+        json!({ "name": "a'b", "value": "x" }),
+    )
+    .unwrap_err();
+
+    assert!(matches!(err, Error::InvalidAttributeName { name } if name == "a'b"));
 }

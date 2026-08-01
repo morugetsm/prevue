@@ -204,7 +204,11 @@ fn text_array_vs_mustache() {
     </div>"#,
         json!({ "arr": [1, 2, 3] }),
         r#"<div>
-        <p>1,2,3</p><p>[ 1, 2, 3 ]</p>
+        <p>1,2,3</p><p>[
+  1,
+  2,
+  3
+]</p>
     </div>"#,
     );
 }
@@ -234,7 +238,20 @@ fn text_array_mixed_vs_mustache() {
             "mixed_arr": [null, true, "hello", 1, [4, 5, 6], { "a": "b" }],
         }),
         r#"<div>
-        <p>,true,hello,1,4,5,6,[object Object]</p><p>[ null, true, "hello", 1, [ 4, 5, 6 ], { "a": "b" } ]</p>
+        <p>,true,hello,1,4,5,6,[object Object]</p><p>[
+  null,
+  true,
+  "hello",
+  1,
+  [
+    4,
+    5,
+    6
+  ],
+  {
+    "a": "b"
+  }
+]</p>
     </div>"#,
     );
 }
@@ -264,7 +281,9 @@ fn text_object_vs_mustache() {
             "obj": { "key": "value" },
         }),
         r#"<div>
-        <p>[object Object]</p><p>{ "key": "value" }</p>
+        <p>[object Object]</p><p>{
+  "key": "value"
+}</p>
     </div>"#,
     );
 }
@@ -294,7 +313,20 @@ fn text_object_mixed_vs_mustache() {
             "mixed_obj": { "a": null, "b": true, "c": "hello", "d": 1, "e": [4, 5, 6], "f": { "g": "h" } },
         }),
         r#"<div>
-        <p>[object Object]</p><p>{ "a": null, "b": true, "c": "hello", "d": 1, "e": [ 4, 5, 6 ], "f": { "g": "h" } }</p>
+        <p>[object Object]</p><p>{
+  "a": null,
+  "b": true,
+  "c": "hello",
+  "d": 1,
+  "e": [
+    4,
+    5,
+    6
+  ],
+  "f": {
+    "g": "h"
+  }
+}</p>
     </div>"#,
     );
 }

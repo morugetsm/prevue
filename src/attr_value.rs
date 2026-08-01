@@ -1,34 +1,133 @@
 use std::{borrow::Cow, cell::RefCell};
 
-use boa_engine::JsValue;
+use boa_engine::{JsValue, JsVariant};
 use html5ever::{QualName, tendril::StrTendril};
 use serde_json::Value as JsonValue;
 
-use crate::{Error, Result, engine::Engine};
+use crate::{Directive, DirectiveErrorKind, Error, Result, engine::Engine};
 
 pub(crate) fn normalize_bound_attribute(
     engine: &mut Engine,
     key: &str,
     value: &JsValue,
 ) -> Option<String> {
-    match key {
-        "class" | "style" => {
-            let value = engine.json_value(value)?;
-            if key == "class" {
-                normalize_class(&value)
-            } else {
-                normalize_style(&value)
-            }
-        }
-        _ => engine.stringify(value),
+    if let "class" | "style" = key {
+        let json = engine.json_value(value)?;
+        return if key == "class" {
+            normalize_class(&json)
+        } else {
+            normalize_style(&json)
+        };
     }
+
+    // Ahead of the name check, so `:disabled="[]"` drops despite being truthy.
+    if !is_renderable_attr_value(value) {
+        return None;
+    }
+
+    if is_boolean_attribute(key) {
+        return is_present(value).then(String::new);
+    }
+
+    engine.stringify(value)
 }
 
+/// The values Vue is willing to write into an attribute.
+fn is_renderable_attr_value(value: &JsValue) -> bool {
+    matches!(
+        value.variant(),
+        JsVariant::String(_)
+            | JsVariant::Integer32(_)
+            | JsVariant::Float64(_)
+            | JsVariant::Boolean(_)
+    )
+}
+
+/// Vue keeps a boolean attribute when the value is truthy or the empty string.
+fn is_present(value: &JsValue) -> bool {
+    value.to_boolean() || matches!(value.variant(), JsVariant::String(text) if text.is_empty())
+}
+
+/// Decided by presence alone, so `disabled="false"` still disables.
+fn is_boolean_attribute(name: &str) -> bool {
+    matches!(
+        name,
+        "allowfullscreen"
+            | "async"
+            | "autofocus"
+            | "autoplay"
+            | "checked"
+            | "controls"
+            | "default"
+            | "defer"
+            | "disabled"
+            | "formnovalidate"
+            | "hidden"
+            | "inert"
+            | "ismap"
+            | "itemscope"
+            | "loop"
+            | "multiple"
+            | "muted"
+            | "nomodule"
+            | "novalidate"
+            | "open"
+            | "readonly"
+            | "required"
+            | "reversed"
+            | "scoped"
+            | "seamless"
+            | "selected"
+    )
+}
+
+/// Apply `v-bind` modifiers to a resolved attribute name.
+pub(crate) fn apply_modifiers(name: String, modifiers: &str) -> Result<String> {
+    modifiers
+        .split('.')
+        .filter(|modifier| !modifier.is_empty())
+        .try_fold(name, |name, modifier| match modifier {
+            "camel" => Ok(camelize(&name)),
+            unknown => Err(Error::InvalidDirective {
+                directive: Directive::Bind,
+                kind: DirectiveErrorKind::UnknownModifier,
+                expression: Some(unknown.to_string()),
+            }),
+        })
+}
+
+/// `view-box` becomes `viewBox`, matching Vue's `camelize`.
+fn camelize(name: &str) -> String {
+    let mut camelized = String::with_capacity(name.len());
+    let mut chars = name.chars();
+
+    while let Some(ch) = chars.next() {
+        if ch != '-' {
+            camelized.push(ch);
+            continue;
+        }
+        match chars.next() {
+            Some(next) if next.is_ascii_alphanumeric() || next == '_' => {
+                camelized.push(next.to_ascii_uppercase());
+            }
+            Some(next) => {
+                camelized.push('-');
+                camelized.push(next);
+            }
+            None => camelized.push('-'),
+        }
+    }
+
+    camelized
+}
+
+/// Vue's `isSSRSafeAttrName`, plus `\0` and `\r` — rejecting more than Vue can
+/// only keep output Vue would never produce anyway.
 pub(crate) fn validate_attribute_name(name: &str) -> Result<()> {
     (!name.is_empty()
-        && name
-            .chars()
-            .all(|ch| !ch.is_ascii_whitespace() && !matches!(ch, '\0' | '>' | '/' | '=')))
+        && name.chars().all(|ch| {
+            !ch.is_ascii_whitespace() && !matches!(ch, '\0' | '>' | '/' | '=' | '"' | '\'')
+        }))
     .then_some(())
     .ok_or_else(|| Error::InvalidAttributeName {
         name: name.to_string(),
@@ -65,54 +164,144 @@ fn normalize_class(value: &JsonValue) -> Option<String> {
     (!classes.is_empty()).then(|| classes.join(" "))
 }
 
-fn normalize_style(value: &JsonValue) -> Option<String> {
-    match value {
-        JsonValue::String(value) => {
-            let value = value.trim();
-            (!value.is_empty()).then(|| value.to_string())
-        }
-        JsonValue::Array(values) => values
-            .iter()
-            .filter_map(normalize_style)
-            .reduce(|merged, value| merge_style(&merged, &value)),
-        JsonValue::Object(values) => {
-            let styles = values
-                .iter()
-                .filter_map(|(name, value)| {
-                    style_value(value)
-                        .map(|value| format!("{}: {};", css_property_name(name), value))
-                })
-                .collect::<Vec<_>>();
-            (!styles.is_empty()).then(|| styles.join(" "))
-        }
-        _ => None,
+/// A style object in source order. Vue relies on JavaScript object semantics
+/// here, so a repeated key keeps its position but takes the newer value.
+type Declarations = Vec<(String, String)>;
+
+fn set_declaration(declarations: &mut Declarations, name: String, value: String) {
+    match declarations.iter_mut().find(|(key, _)| *key == name) {
+        Some(entry) => entry.1 = value,
+        None => declarations.push((name, value)),
     }
 }
 
-fn style_value(value: &JsonValue) -> Option<String> {
+/// A top-level string passes through untouched; everything else collapses into
+/// one declaration list, later keys winning.
+fn normalize_style(value: &JsonValue) -> Option<String> {
+    if let JsonValue::String(text) = value {
+        let text = text.trim();
+        return (!text.is_empty()).then(|| text.to_string());
+    }
+
+    let mut declarations = Declarations::new();
+    collect_declarations(value, &mut declarations);
+    (!declarations.is_empty()).then(|| stringify_style(&declarations))
+}
+
+fn collect_declarations(value: &JsonValue, declarations: &mut Declarations) {
+    match value {
+        JsonValue::String(text) => {
+            for (name, value) in parse_string_style(text) {
+                set_declaration(declarations, name, value);
+            }
+        }
+        JsonValue::Array(values) => {
+            for value in values {
+                collect_declarations(value, declarations);
+            }
+        }
+        JsonValue::Object(values) => {
+            for (name, value) in values {
+                if let Some(value) = declaration_value(value) {
+                    set_declaration(declarations, hyphenate(name).into_owned(), value);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Split `a: 1; b: 2` into declarations, ignoring `;` inside `()` so that
+/// `background: url(a;b)` survives.
+fn parse_string_style(css: &str) -> Declarations {
+    let mut declarations = Declarations::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+
+    let mut push = |item: &str| {
+        if let Some((name, value)) = item.split_once(':') {
+            let name = name.trim();
+            if !name.is_empty() {
+                declarations.push((name.to_string(), value.trim().to_string()));
+            }
+        }
+    };
+
+    let without_comments = strip_css_comments(css);
+    for (idx, ch) in without_comments.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            ';' if depth == 0 => {
+                push(&without_comments[start..idx]);
+                start = idx + 1;
+            }
+            _ => {}
+        }
+    }
+    push(&without_comments[start..]);
+
+    declarations
+}
+
+fn strip_css_comments(css: &str) -> Cow<'_, str> {
+    if !css.contains("/*") {
+        return Cow::Borrowed(css);
+    }
+
+    let mut stripped = String::with_capacity(css.len());
+    let mut rest = css;
+    while let Some(open) = rest.find("/*") {
+        stripped.push_str(&rest[..open]);
+        rest = match rest[open + 2..].find("*/") {
+            Some(close) => &rest[open + 2 + close + 2..],
+            None => "",
+        };
+    }
+    stripped.push_str(rest);
+
+    Cow::Owned(stripped)
+}
+
+/// Vue writes only strings and numbers into a declaration.
+fn declaration_value(value: &JsonValue) -> Option<String> {
     match value {
         JsonValue::String(value) if !value.is_empty() => Some(value.clone()),
         JsonValue::Number(value) => Some(value.to_string()),
-        JsonValue::Array(values) => values.iter().rev().find_map(style_value),
         _ => None,
     }
 }
 
-fn css_property_name(name: &str) -> Cow<'_, str> {
+fn stringify_style(declarations: &Declarations) -> String {
+    declarations
+        .iter()
+        .map(|(name, value)| format!("{name}: {value};"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// `viewBox` becomes `view-box`, the inverse of [`camelize`]. Matching Vue's
+/// `\B([A-Z])` the leading character is left alone, so `MozTransform` becomes
+/// `moz-transform` rather than `-moz-transform`.
+fn hyphenate(name: &str) -> Cow<'_, str> {
     // Custom properties keep their case; no camelCase hump means no rewriting.
     if name.starts_with("--") || !name.bytes().any(|byte| byte.is_ascii_uppercase()) {
         return Cow::Borrowed(name);
     }
 
-    Cow::Owned(name.chars().fold(String::new(), |mut property, ch| {
+    let mut hyphenated = String::with_capacity(name.len() + 4);
+    for (idx, ch) in name.char_indices() {
         if ch.is_ascii_uppercase() {
-            property.push('-');
-            property.push(ch.to_ascii_lowercase());
+            if idx > 0 {
+                hyphenated.push('-');
+            }
+            hyphenated.push(ch.to_ascii_lowercase());
         } else {
-            property.push(ch);
+            hyphenated.push(ch);
         }
-        property
-    }))
+    }
+
+    Cow::Owned(hyphenated)
 }
 
 fn json_truthy(value: &JsonValue) -> bool {
@@ -133,13 +322,15 @@ pub(crate) fn merge_class(existing: &str, value: &str) -> String {
     }
 }
 
+/// Vue's compiler folds a static `style` and a binding into one array, so they
+/// go through the same key merge rather than sitting side by side.
 pub(crate) fn merge_style(existing: &str, value: &str) -> String {
-    match (existing.trim(), value.trim()) {
-        ("", value) => value.to_string(),
-        (existing, "") => existing.to_string(),
-        (existing, value) if existing.ends_with(';') => format!("{existing} {value}"),
-        (existing, value) => format!("{existing}; {value}"),
+    let mut declarations = parse_string_style(existing);
+    for (name, value) in parse_string_style(value) {
+        set_declaration(&mut declarations, name, value);
     }
+
+    stringify_style(&declarations)
 }
 
 #[derive(Default)]
@@ -162,7 +353,11 @@ impl AttrEdits {
         self.adds.push((name, template, value));
     }
 
-    pub(crate) fn apply(self, attrs: &RefCell<Vec<html5ever::Attribute>>) {
+    pub(crate) fn apply(mut self, attrs: &RefCell<Vec<html5ever::Attribute>>) {
+        // Removal runs back to front below, which needs them in order.
+        self.removes.sort_unstable();
+        self.removes.dedup();
+
         let mut attrs_mut = attrs.borrow_mut();
         for (idx, name, value) in self.sets.iter().rev() {
             attrs_mut[*idx].name.local = html5ever::LocalName::from(name.as_str());
