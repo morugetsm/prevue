@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use boa_ast::{
     Statement, StatementListItem,
     declaration::{Binding, Declaration},
@@ -8,6 +10,7 @@ use boa_ast::{
 use boa_engine::{
     Context, JsResult, JsString, JsValue, JsVariant, Source,
     object::{ObjectInitializer, builtins::JsArray},
+    script::Script,
 };
 use boa_parser::{Parser, Source as ParserSource};
 use serde::Serialize;
@@ -16,16 +19,17 @@ use serde_json::Value as JsonValue;
 use crate::{Error, Result};
 
 #[derive(Clone, Debug)]
-pub(crate) struct ForBinding {
-    pattern: String,
-    locals: Vec<String>,
+pub(crate) enum ForBinding {
+    Slots(Vec<String>),
+    Pattern { source: String, locals: Vec<String> },
 }
 
 pub(crate) struct Engine {
     pub context: Context,
     scope_keys: Vec<String>,
-    scope_next: usize,
-    binding_next: usize,
+    temp_depth: usize,
+    eval_cache: Vec<HashMap<String, Script>>,
+    for_binding_cache: HashMap<String, ForBinding>,
 }
 
 impl Engine {
@@ -33,8 +37,9 @@ impl Engine {
         let mut engine = Self {
             context: Context::default(),
             scope_keys: Default::default(),
-            scope_next: 0,
-            binding_next: 0,
+            temp_depth: 0,
+            eval_cache: Default::default(),
+            for_binding_cache: Default::default(),
         };
 
         engine.enter_scope().map_err(|err| Error::Internal {
@@ -42,23 +47,29 @@ impl Engine {
         })?;
 
         let json = serde_json::to_value(data).map_err(|source| Error::DataSerialize { source })?;
-        let inject = |engine: &mut Self, key: &str, value: &JsonValue, field: Option<String>| {
-            let val =
-                JsValue::from_json(value, &mut engine.context).map_err(|err| Error::DataInit {
-                    field: field.clone(),
-                    message: err.to_string(),
-                })?;
-            engine.set_val(key, val).map_err(|err| Error::DataInit {
-                field,
+        let value =
+            JsValue::from_json(&json, &mut engine.context).map_err(|err| Error::DataInit {
+                field: None,
                 message: err.to_string(),
-            })
-        };
-
-        inject(&mut engine, "$", &json, None)?;
+            })?;
+        engine.set_val("$", value).map_err(|err| Error::DataInit {
+            field: None,
+            message: err.to_string(),
+        })?;
 
         if let Some(obj) = json.as_object() {
             for (key, value) in obj.iter().filter(|(key, _)| key.as_str() != "$") {
-                inject(&mut engine, key.as_str(), value, Some(key.clone()))?;
+                let field = Some(key.clone());
+                let value = JsValue::from_json(value, &mut engine.context).map_err(|err| {
+                    Error::DataInit {
+                        field: field.clone(),
+                        message: err.to_string(),
+                    }
+                })?;
+                engine.set_val(key, value).map_err(|err| Error::DataInit {
+                    field,
+                    message: err.to_string(),
+                })?;
             }
         }
 
@@ -66,8 +77,7 @@ impl Engine {
     }
 
     pub fn enter_scope(&mut self) -> JsResult<()> {
-        let key = format!("__scope_{}", self.scope_next);
-        self.scope_next += 1;
+        let key = format!("__scope_{}", self.scope_keys.len());
         let scope = ObjectInitializer::new(&mut self.context).build();
         self.context.global_object().set(
             JsString::from(key.as_str()),
@@ -107,15 +117,16 @@ impl Engine {
         if pattern.is_empty() {
             return None;
         }
+        if let Some(binding) = self.for_binding_cache.get(pattern) {
+            return Some(binding.clone());
+        }
 
         let code = format!("let [{pattern}] = [];");
         let mut parser = Parser::new(ParserSource::from_bytes(code.as_bytes()));
         let script = parser
             .parse_script(&Scope::new_global(), self.context.interner_mut())
             .ok()?;
-
-        let statements = script.statements().statements();
-        let [StatementListItem::Declaration(decl)] = statements else {
+        let [StatementListItem::Declaration(decl)] = script.statements().statements() else {
             return None;
         };
         let Declaration::Lexical(lexical) = decl.as_ref() else {
@@ -133,44 +144,54 @@ impl Engine {
             return None;
         }
 
-        let mut locals = Vec::new();
-        collect_binding_names(binding, self.context.interner(), &mut locals);
-
-        Some(ForBinding {
-            pattern: pattern.to_string(),
-            locals,
-        })
+        let binding = if let Some(slots) =
+            simple_slot_names(array_pattern.bindings(), self.context.interner())
+        {
+            ForBinding::Slots(slots)
+        } else {
+            let mut locals = Vec::new();
+            collect_binding_names(binding, self.context.interner(), &mut locals);
+            ForBinding::Pattern {
+                source: pattern.to_string(),
+                locals,
+            }
+        };
+        self.for_binding_cache
+            .insert(pattern.to_string(), binding.clone());
+        Some(binding)
     }
 
-    pub fn bind_for_slots<I>(&mut self, binding: &ForBinding, slots: I) -> bool
-    where
-        I: IntoIterator<Item = JsValue>,
-    {
-        let Some(scope_key) = self.scope_keys.last().cloned() else {
-            return false;
-        };
-        let slot_array = JsArray::from_iter(slots, &mut self.context);
-
-        self.with_temp(slot_array.into(), |engine, temp_ref| {
-            let scope_ref = js_string_literal(&scope_key);
-            let copies = binding
-                .locals
-                .iter()
-                .map(|name| {
-                    format!(
-                        "globalThis[{scope_ref}][{}] = {};",
-                        js_string_literal(name),
-                        name
-                    )
+    pub fn bind_for_slots(&mut self, binding: &ForBinding, slots: &[JsValue]) -> bool {
+        match binding {
+            ForBinding::Slots(names) => {
+                for (idx, name) in names.iter().enumerate() {
+                    let value = slots.get(idx).cloned().unwrap_or_else(JsValue::undefined);
+                    if self.set_val(name, value).is_err() {
+                        return false;
+                    }
+                }
+                true
+            }
+            ForBinding::Pattern { source, locals } => {
+                let Some(scope_key) = self.scope_keys.last().cloned() else {
+                    return false;
+                };
+                let slot_array = JsArray::from_iter(slots.iter().cloned(), &mut self.context);
+                self.with_temp(slot_array.into(), |engine, temp_ref| {
+                    let scope_ref = js_string_literal(&scope_key);
+                    let copies = locals
+                        .iter()
+                        .map(|name| copy_to_scope(&scope_ref, name))
+                        .collect::<String>();
+                    engine
+                        .eval(&format!(
+                            "let [{source}] = globalThis[{temp_ref}]; {copies}"
+                        ))
+                        .map(|_| ())
                 })
-                .collect::<String>();
-            let code = format!(
-                "let [{}] = globalThis[{temp_ref}]; {copies}",
-                binding.pattern
-            );
-            engine.eval(&code).map(|_| ())
-        })
-        .is_ok()
+                .is_ok()
+            }
+        }
     }
 
     pub fn eval_with_temp_val<F>(&mut self, value: JsValue, build_code: F) -> JsResult<JsValue>
@@ -184,8 +205,8 @@ impl Engine {
     where
         F: FnOnce(&mut Self, &str) -> JsResult<T>,
     {
-        let temp_key = format!("__temp_{}", self.binding_next);
-        self.binding_next += 1;
+        let temp_key = format!("__temp_{}", self.temp_depth);
+        self.temp_depth += 1;
 
         self.context.global_object().set(
             JsString::from(temp_key.as_str()),
@@ -201,24 +222,38 @@ impl Engine {
             .context
             .global_object()
             .delete_property_or_throw(JsString::from(temp_key), &mut self.context);
+        self.temp_depth -= 1;
 
         result
     }
 
     pub fn eval(&mut self, code: &str) -> JsResult<JsValue> {
-        let scoped = self
-            .scope_keys
-            .iter()
-            .rev()
-            .fold(code.to_string(), |acc, key| {
-                format!(r#"with (globalThis["{key}"]) {{ {acc} }}"#)
-            });
-        let evaluated = self.context.eval(Source::from_bytes(scoped.as_bytes()))?;
+        let depth = self.scope_keys.len();
+        let script =
+            if let Some(script) = self.eval_cache.get(depth).and_then(|cache| cache.get(code)) {
+                script.clone()
+            } else {
+                let scoped = self
+                    .scope_keys
+                    .iter()
+                    .rev()
+                    .fold(code.to_string(), |acc, key| {
+                        format!(r#"with (globalThis["{key}"]) {{ {acc} }}"#)
+                    });
+                let script = Script::parse(
+                    Source::from_bytes(scoped.as_bytes()),
+                    None,
+                    &mut self.context,
+                )?;
+                if self.eval_cache.len() <= depth {
+                    self.eval_cache.resize_with(depth + 1, HashMap::new);
+                }
+                self.eval_cache[depth].insert(code.to_string(), script.clone());
+                script
+            };
+        let evaluated = script.evaluate(&mut self.context)?;
 
-        if evaluated.equals(
-            &JsValue::new(self.context.global_object()),
-            &mut self.context,
-        )? {
+        if evaluated.strict_equals(&JsValue::new(self.context.global_object())) {
             Ok(JsValue::null())
         } else {
             Ok(evaluated)
@@ -235,17 +270,9 @@ impl Engine {
         let copies = names
             .iter()
             .filter(|name| name.as_str() != "$")
-            .map(|name| {
-                format!(
-                    "globalThis[{scope_ref}][{}] = {};",
-                    js_string_literal(name),
-                    name
-                )
-            })
+            .map(|name| copy_to_scope(&scope_ref, name))
             .collect::<String>();
-        self.eval(&format!("{code}\n{copies}"))?;
-
-        Ok(())
+        self.eval(&format!("{code}\n{copies}")).map(|_| ())
     }
 
     pub fn eval_expr(&mut self, code: &str) -> JsResult<JsValue> {
@@ -270,6 +297,9 @@ impl Engine {
     pub fn stringify(&mut self, value: &JsValue) -> Option<String> {
         match value.variant() {
             JsVariant::Null | JsVariant::Undefined => None,
+            JsVariant::Boolean(value) => Some(value.to_string()),
+            JsVariant::Integer32(value) => Some(value.to_string()),
+            JsVariant::String(value) => Some(value.to_std_string_escaped()),
             _ => Some(
                 value
                     .to_string(&mut self.context)
@@ -308,6 +338,8 @@ impl Engine {
 fn fmt_text(value: &JsValue, context: &mut Context) -> Option<String> {
     match value.variant() {
         JsVariant::Null | JsVariant::Undefined => None,
+        JsVariant::Boolean(val) => Some(val.to_string()),
+        JsVariant::Integer32(val) => Some(val.to_string()),
         JsVariant::String(val) => Some(val.to_std_string_escaped()),
         JsVariant::Object(_) => {
             let json = value.to_json(context).ok()??;
@@ -436,17 +468,44 @@ fn collect_pattern_names(
     }
 }
 
+fn simple_slot_names(
+    elements: &[ArrayPatternElement],
+    interner: &boa_engine::interner::Interner,
+) -> Option<Vec<String>> {
+    elements
+        .iter()
+        .map(|element| match element {
+            ArrayPatternElement::SingleName {
+                ident,
+                default_init: None,
+            } => Some(identifier_name(ident, interner)),
+            _ => None,
+        })
+        .collect()
+}
+
 fn push_identifier(
     ident: &Identifier,
     interner: &boa_engine::interner::Interner,
     locals: &mut Vec<String>,
 ) {
-    let name = interner.resolve_expect(*ident.sym_ref()).to_string();
+    let name = identifier_name(ident, interner);
     if !locals.iter().any(|existing| existing == &name) {
         locals.push(name);
     }
 }
 
+fn identifier_name(ident: &Identifier, interner: &boa_engine::interner::Interner) -> String {
+    interner.resolve_expect(*ident.sym_ref()).to_string()
+}
+
 fn js_string_literal(value: &str) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string())
+}
+
+fn copy_to_scope(scope_ref: &str, name: &str) -> String {
+    format!(
+        "globalThis[{scope_ref}][{}] = {name};",
+        js_string_literal(name)
+    )
 }

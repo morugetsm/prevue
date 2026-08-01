@@ -28,7 +28,7 @@ pub(crate) fn render_text(content: &str, engine: &mut Engine) -> Option<String> 
 }
 
 #[derive(Clone, Copy)]
-enum JsScanState {
+enum ScanState {
     Code,
     String(char),
     Template,
@@ -45,53 +45,53 @@ pub(crate) fn find_closing_delimiter<F>(
 where
     F: FnMut(usize) -> bool,
 {
-    let mut state = JsScanState::Code;
+    let mut state = ScanState::Code;
     let mut escaped = false;
     let mut can_start_regex = true;
     let mut after_property_dot = false;
-    let mut template_expr_brace_depths: Vec<usize> = Vec::new();
+    let mut tmpl_braces: Vec<usize> = Vec::new();
     let mut iter = content[start..].char_indices().peekable();
 
     while let Some((offset, ch)) = iter.next() {
         let pos = start + offset;
 
         match state {
-            JsScanState::Code => match ch {
+            ScanState::Code => match ch {
                 ch if ch.is_whitespace() => {}
                 '\'' | '"' => {
-                    state = JsScanState::String(ch);
+                    state = ScanState::String(ch);
                     escaped = false;
                     can_start_regex = false;
                     after_property_dot = false;
                 }
                 '`' => {
-                    state = JsScanState::Template;
+                    state = ScanState::Template;
                     escaped = false;
                     can_start_regex = false;
                     after_property_dot = false;
                 }
                 '/' if iter.peek().is_some_and(|(_, next)| *next == '/') => {
                     iter.next();
-                    state = JsScanState::LineComment;
+                    state = ScanState::LineComment;
                 }
                 '/' if iter.peek().is_some_and(|(_, next)| *next == '*') => {
                     iter.next();
-                    state = JsScanState::BlockComment;
+                    state = ScanState::BlockComment;
                 }
                 '/' if can_start_regex => {
-                    state = JsScanState::Regex { in_class: false };
+                    state = ScanState::Regex { in_class: false };
                     escaped = false;
                     can_start_regex = false;
                     after_property_dot = false;
                 }
-                '<' if template_expr_brace_depths.is_empty() && should_stop(pos) => return None,
-                '}' if !template_expr_brace_depths.is_empty() => {
-                    let depth = template_expr_brace_depths
+                '<' if tmpl_braces.is_empty() && should_stop(pos) => return None,
+                '}' if !tmpl_braces.is_empty() => {
+                    let depth = tmpl_braces
                         .last_mut()
                         .expect("non-empty template expression stack");
                     if *depth == 0 {
-                        template_expr_brace_depths.pop();
-                        state = JsScanState::Template;
+                        tmpl_braces.pop();
+                        state = ScanState::Template;
                     } else {
                         *depth -= 1;
                     }
@@ -99,10 +99,10 @@ where
                     after_property_dot = false;
                 }
                 '}' if iter.peek().is_some_and(|(_, next)| *next == '}') => return Some(pos),
-                ch if is_js_identifier_start(ch) => {
+                ch if is_ident_start(ch) => {
                     let mut end = pos + ch.len_utf8();
                     while let Some((next_offset, next_ch)) = iter.peek().copied() {
-                        if !is_js_identifier_continue(next_ch) {
+                        if !is_ident_continue(next_ch) {
                             break;
                         }
                         iter.next();
@@ -110,7 +110,7 @@ where
                     }
 
                     let word = &content[pos..end];
-                    can_start_regex = !after_property_dot && keyword_allows_regex_after(word);
+                    can_start_regex = !after_property_dot && regex_after_keyword(word);
                     after_property_dot = false;
                 }
                 ch if ch.is_ascii_digit() => {
@@ -133,7 +133,7 @@ where
                 }
                 '(' | '[' | '{' | ',' | ';' | ':' | '?' => {
                     if ch == '{'
-                        && let Some(depth) = template_expr_brace_depths.last_mut()
+                        && let Some(depth) = tmpl_braces.last_mut()
                     {
                         *depth += 1;
                     }
@@ -152,57 +152,57 @@ where
                     after_property_dot = false;
                 }
             },
-            JsScanState::String(quote) => {
+            ScanState::String(quote) => {
                 if escaped {
                     escaped = false;
                 } else if ch == '\\' {
                     escaped = true;
                 } else if ch == quote {
-                    state = JsScanState::Code;
+                    state = ScanState::Code;
                 }
             }
-            JsScanState::Template => {
+            ScanState::Template => {
                 if escaped {
                     escaped = false;
                 } else if ch == '\\' {
                     escaped = true;
                 } else if ch == '`' {
-                    state = JsScanState::Code;
+                    state = ScanState::Code;
                     can_start_regex = false;
                     after_property_dot = false;
                 } else if ch == '$' && iter.peek().is_some_and(|(_, next)| *next == '{') {
                     iter.next();
-                    template_expr_brace_depths.push(0);
-                    state = JsScanState::Code;
+                    tmpl_braces.push(0);
+                    state = ScanState::Code;
                     can_start_regex = true;
                     after_property_dot = false;
                 }
             }
-            JsScanState::Regex { in_class } => {
+            ScanState::Regex { in_class } => {
                 if escaped {
                     escaped = false;
                 } else if ch == '\\' {
                     escaped = true;
                 } else if in_class {
                     if ch == ']' {
-                        state = JsScanState::Regex { in_class: false };
+                        state = ScanState::Regex { in_class: false };
                     }
                 } else if ch == '[' {
-                    state = JsScanState::Regex { in_class: true };
+                    state = ScanState::Regex { in_class: true };
                 } else if ch == '/' {
-                    state = JsScanState::Code;
+                    state = ScanState::Code;
                     can_start_regex = false;
                 }
             }
-            JsScanState::LineComment => {
+            ScanState::LineComment => {
                 if ch == '\n' {
-                    state = JsScanState::Code;
+                    state = ScanState::Code;
                 }
             }
-            JsScanState::BlockComment => {
+            ScanState::BlockComment => {
                 if ch == '*' && iter.peek().is_some_and(|(_, next)| *next == '/') {
                     iter.next();
-                    state = JsScanState::Code;
+                    state = ScanState::Code;
                 }
             }
         }
@@ -211,15 +211,15 @@ where
     None
 }
 
-fn is_js_identifier_start(ch: char) -> bool {
+fn is_ident_start(ch: char) -> bool {
     ch == '$' || ch == '_' || ch.is_ascii_alphabetic()
 }
 
-fn is_js_identifier_continue(ch: char) -> bool {
-    is_js_identifier_start(ch) || ch.is_ascii_digit()
+fn is_ident_continue(ch: char) -> bool {
+    is_ident_start(ch) || ch.is_ascii_digit()
 }
 
-fn keyword_allows_regex_after(word: &str) -> bool {
+fn regex_after_keyword(word: &str) -> bool {
     matches!(
         word,
         "return"

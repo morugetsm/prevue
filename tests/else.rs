@@ -73,6 +73,28 @@ fn else_if_empty_string_falsy() {
     );
 }
 
+#[test]
+fn else_if_undeclared_identifier_falsy() {
+    assert_render_body_eq!(
+        r#"<div>
+        <div v-if="false">IF1</div>
+        <div v-else-if="notexist">MISSING1</div>
+        <div v-else-if="true">NEXT</div>
+        <div v-else>ELSE1</div>
+
+        <div v-if="false">IF2</div>
+        <div v-else-if="notexist">MISSING2</div>
+        <div v-else>ELSE2</div>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <div>NEXT</div>
+
+        <div>ELSE2</div>
+    </div>"#,
+    );
+}
+
 // === Expressions ===
 
 #[test]

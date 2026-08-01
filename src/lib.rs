@@ -23,9 +23,22 @@ use engine::{Engine, ForBinding};
 pub use error::{Directive, DirectiveErrorKind, Error, Result};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ContentAction {
-    TraverseChildren,
-    SkipChildren,
+enum Walk {
+    Children,
+    Done,
+}
+
+#[derive(Default)]
+struct IfChain {
+    active: bool,
+    matched: bool,
+}
+
+impl IfChain {
+    fn reset(&mut self) {
+        self.active = false;
+        self.matched = false;
+    }
 }
 
 /// Render template with data
@@ -42,11 +55,11 @@ enum ContentAction {
 /// assert!(result.contains("Hello"));
 /// ```
 pub fn render(template: impl AsRef<str>, data: impl Serialize) -> Result<String> {
+    let mut buffer = Vec::new();
     let dom = template::parse(template.as_ref())?;
     let mut engine = Engine::new(data)?;
-    traverse(&Rc::clone(&dom.document), &mut engine)?;
+    traverse(&dom.document, &mut engine)?;
 
-    let mut buffer = Vec::new();
     serialize(
         &mut buffer,
         &SerializableHandle::from(Rc::clone(&dom.document)),
@@ -56,10 +69,9 @@ pub fn render(template: impl AsRef<str>, data: impl Serialize) -> Result<String>
         message: format!("failed to serialize HTML: {source}"),
     })?;
 
-    let rendered = String::from_utf8(buffer).map_err(|source| Error::RenderOutput {
+    String::from_utf8(buffer).map_err(|source| Error::RenderOutput {
         message: format!("failed to convert rendered HTML to UTF-8: {source}"),
-    })?;
-    Ok(rendered)
+    })
 }
 
 fn is_setup_script(handle: &Handle) -> bool {
@@ -98,7 +110,7 @@ fn take_v_pre(handle: &Handle) -> bool {
     find_and_remove_directive(attrs, "v-pre").is_some()
 }
 
-// Traverse and process a node. Returns whether the node should stay in output.
+// Render a node. Returns whether the node should stay in output.
 fn traverse(handle: &Handle, engine: &mut Engine) -> Result<bool> {
     if take_v_pre(handle) {
         return Ok(true);
@@ -113,38 +125,37 @@ fn traverse(handle: &Handle, engine: &mut Engine) -> Result<bool> {
         return Ok(false);
     }
 
-    if process_node_content(handle, engine)? == ContentAction::SkipChildren {
+    if render_content(handle, engine)? == Walk::Done {
         return Ok(true);
     }
 
     if is_raw_text_element(handle) {
         return Ok(true);
     }
+    if handle.children.borrow().is_empty() {
+        return Ok(true);
+    }
 
     let children: Vec<Handle> = children_for_traversal(handle);
 
-    let mut if_chain_active = false;
-    let mut if_chain_matched = false;
+    let mut if_chain = IfChain::default();
 
     for node in children.iter() {
         if take_v_pre(node) {
-            if_chain_active = false;
-            if_chain_matched = false;
+            if_chain.reset();
             continue;
         }
 
         let is_non_whitespace_text = is_non_whitespace_text_node(node);
         if is_non_whitespace_text {
-            if_chain_active = false;
-            if_chain_matched = false;
+            if_chain.reset();
         }
 
         if !matches!(&node.data, NodeData::Element { .. }) && !is_non_whitespace_text {
             continue;
         }
 
-        let processed =
-            process_directives(node, engine, &mut if_chain_active, &mut if_chain_matched)?;
+        let processed = apply_directives(node, engine, &mut if_chain)?;
 
         if let Some(replacements) = processed {
             replace_node_in_parent(node, &replacements);
@@ -156,36 +167,34 @@ fn traverse(handle: &Handle, engine: &mut Engine) -> Result<bool> {
     Ok(true)
 }
 
-// Process node content: v-bind, v-text, v-html, and mustache.
-fn process_node_content(handle: &Handle, engine: &mut Engine) -> Result<ContentAction> {
+// Render v-bind, v-text, v-html, and mustache on the current node.
+fn render_content(handle: &Handle, engine: &mut Engine) -> Result<Walk> {
     match &handle.data {
         NodeData::Element { name, attrs, .. } => {
-            let content_directives = {
+            let (has_v_text, has_v_html) = {
                 let attrs_ref = attrs.borrow();
-                [
-                    (
-                        attrs_ref.iter().any(|a| a.name.local.as_ref() == "v-text"),
-                        Directive::Text,
-                    ),
-                    (
-                        attrs_ref.iter().any(|a| a.name.local.as_ref() == "v-html"),
-                        Directive::Html,
-                    ),
-                ]
-                .into_iter()
-                .filter_map(|(has_directive, directive)| has_directive.then_some(directive))
-                .collect::<Vec<_>>()
+                if attrs_ref.is_empty() {
+                    return Ok(Walk::Children);
+                }
+                let mut has_v_text = false;
+                let mut has_v_html = false;
+                for attr in attrs_ref.iter() {
+                    match attr.name.local.as_ref() {
+                        "v-text" => has_v_text = true,
+                        "v-html" => has_v_html = true,
+                        _ => {}
+                    }
+                }
+                (has_v_text, has_v_html)
             };
-            if content_directives.len() > 1 {
+            if has_v_text && has_v_html {
                 return Err(Error::ConflictingDirectives {
-                    directives: content_directives,
+                    directives: vec![Directive::Text, Directive::Html],
                 });
             }
 
-            let mut action = ContentAction::TraverseChildren;
-            let mut renames: Vec<(usize, String, String)> = Vec::new();
-            let mut removals: Vec<usize> = Vec::new();
-            let mut additions: Vec<(String, QualName, String)> = Vec::new();
+            let mut action = Walk::Children;
+            let mut edits = AttrEdits::default();
 
             for (i, attr) in attrs.borrow().iter().enumerate() {
                 let name_ref: &str = attr.name.local.as_ref();
@@ -193,18 +202,18 @@ fn process_node_content(handle: &Handle, engine: &mut Engine) -> Result<ContentA
                 if name_ref == "v-text" {
                     if let Some(value) = engine.eval_str(attr.value.as_ref()) {
                         replace_element_children(handle, vec![create_text_node(&value)]);
-                        action = ContentAction::SkipChildren;
+                        action = Walk::Done;
                     }
-                    removals.push(i);
+                    edits.remove(i);
                     continue;
                 }
 
                 if name_ref == "v-html" {
                     if let Some(value) = engine.eval_str(attr.value.as_ref()) {
                         replace_element_children(handle, parse_html_fragment(name, &value));
-                        action = ContentAction::SkipChildren;
+                        action = Walk::Done;
                     }
-                    removals.push(i);
+                    edits.remove(i);
                     continue;
                 }
 
@@ -224,10 +233,10 @@ fn process_node_content(handle: &Handle, engine: &mut Engine) -> Result<ContentA
                                 .and_then(|value| normalize_bound_attribute(engine, &key, &value));
                             if let Some(value) = value {
                                 validate_attribute_name(&key)?;
-                                additions.push((key, attr.name.clone(), value));
+                                edits.add(key, attr.name.clone(), value);
                             }
                         }
-                        removals.push(i);
+                        edits.remove(i);
                     }
                     continue;
                 }
@@ -241,17 +250,17 @@ fn process_node_content(handle: &Handle, engine: &mut Engine) -> Result<ContentA
 
                     if arg_raw.starts_with('[') && arg_raw.ends_with(']') {
                         if value_expr.is_empty() {
-                            removals.push(i);
+                            edits.remove(i);
                             continue;
                         }
                         let inner = &arg_raw[1..arg_raw.len() - 1];
                         match (engine.eval_str(inner), engine.eval_str(value_expr)) {
-                            (Some(resolved), Some(_)) if resolved.is_empty() => removals.push(i),
+                            (Some(resolved), Some(_)) if resolved.is_empty() => edits.remove(i),
                             (Some(resolved), Some(value)) => {
                                 validate_attribute_name(&resolved)?;
-                                renames.push((i, resolved, value));
+                                edits.set(i, resolved, value);
                             }
-                            _ => removals.push(i),
+                            _ => edits.remove(i),
                         }
                     } else {
                         let target = if value_expr.is_empty() {
@@ -259,69 +268,27 @@ fn process_node_content(handle: &Handle, engine: &mut Engine) -> Result<ContentA
                         } else {
                             value_expr
                         };
-                        if matches!(arg_raw, "class" | "style") {
-                            let value = engine
-                                .eval_expr(target)
-                                .ok()
-                                .and_then(|value| value.to_json(&mut engine.context).ok().flatten())
-                                .and_then(|value| {
-                                    if arg_raw == "class" {
-                                        normalize_class(&value)
-                                    } else {
-                                        normalize_style(&value)
-                                    }
-                                });
-                            if let Some(value) = value {
-                                additions.push((arg_raw.to_string(), attr.name.clone(), value));
+
+                        let value = engine
+                            .eval_expr(target)
+                            .ok()
+                            .and_then(|value| normalize_bound_attribute(engine, arg_raw, &value));
+                        match (matches!(arg_raw, "class" | "style"), value) {
+                            (true, Some(value)) => {
+                                edits.add(arg_raw.to_string(), attr.name.clone(), value);
+                                edits.remove(i);
                             }
-                            removals.push(i);
-                        } else {
-                            match engine.eval_str(target) {
-                                Some(value) => {
-                                    validate_attribute_name(arg_raw)?;
-                                    renames.push((i, arg_raw.to_string(), value));
-                                }
-                                _ => removals.push(i),
+                            (false, Some(value)) => {
+                                validate_attribute_name(arg_raw)?;
+                                edits.set(i, arg_raw.to_string(), value);
                             }
+                            _ => edits.remove(i),
                         }
                     }
                 }
             }
 
-            // Apply modifications
-            let mut attrs_mut = attrs.borrow_mut();
-            for (idx, new_name, new_value) in renames.iter().rev() {
-                attrs_mut[*idx].name.local = html5ever::LocalName::from(new_name.as_str());
-                attrs_mut[*idx].value = StrTendril::from_str(new_value.as_str()).unwrap();
-            }
-            for idx in removals.iter().rev() {
-                attrs_mut.remove(*idx);
-            }
-            drop(attrs_mut);
-
-            let mut attrs_mut = attrs.borrow_mut();
-            for (local_name, template_qn, value) in additions.iter() {
-                if let Some(existing) = attrs_mut
-                    .iter_mut()
-                    .find(|a| a.name.local.as_ref() == local_name.as_str())
-                {
-                    let merged = match local_name.as_str() {
-                        "class" => merge_class(existing.value.as_ref(), value),
-                        "style" => merge_style(existing.value.as_ref(), value),
-                        _ => value.clone(),
-                    };
-                    existing.value = StrTendril::from_str(merged.as_str()).unwrap();
-                } else {
-                    attrs_mut.push(html5ever::Attribute {
-                        name: QualName::new(
-                            template_qn.prefix.clone(),
-                            template_qn.ns.clone(),
-                            html5ever::LocalName::from(local_name.as_str()),
-                        ),
-                        value: StrTendril::from_str(value.as_str()).unwrap(),
-                    });
-                }
-            }
+            edits.apply(attrs);
             Ok(action)
         }
         NodeData::Text { contents } => {
@@ -330,9 +297,66 @@ fn process_node_content(handle: &Handle, engine: &mut Engine) -> Result<ContentA
             if let Some(rendered) = interpolation::render_text(&content, engine) {
                 *content = StrTendril::from_str(&rendered).unwrap();
             }
-            Ok(ContentAction::TraverseChildren)
+            Ok(Walk::Children)
         }
-        _ => Ok(ContentAction::TraverseChildren),
+        _ => Ok(Walk::Children),
+    }
+}
+
+#[derive(Default)]
+struct AttrEdits {
+    sets: Vec<(usize, String, String)>,
+    removes: Vec<usize>,
+    adds: Vec<(String, QualName, String)>,
+}
+
+impl AttrEdits {
+    fn set(&mut self, idx: usize, name: String, value: String) {
+        self.sets.push((idx, name, value));
+    }
+
+    fn remove(&mut self, idx: usize) {
+        self.removes.push(idx);
+    }
+
+    fn add(&mut self, name: String, template: QualName, value: String) {
+        self.adds.push((name, template, value));
+    }
+
+    fn apply(self, attrs: &RefCell<Vec<html5ever::Attribute>>) {
+        let mut attrs_mut = attrs.borrow_mut();
+        for (idx, name, value) in self.sets.iter().rev() {
+            attrs_mut[*idx].name.local = html5ever::LocalName::from(name.as_str());
+            attrs_mut[*idx].value = StrTendril::from_str(value.as_str()).unwrap();
+        }
+        for idx in self.removes.iter().rev() {
+            attrs_mut.remove(*idx);
+        }
+        drop(attrs_mut);
+
+        let mut attrs_mut = attrs.borrow_mut();
+        for (name, template, value) in self.adds {
+            if let Some(existing) = attrs_mut
+                .iter_mut()
+                .find(|attr| attr.name.local.as_ref() == name.as_str())
+            {
+                let value = match name.as_str() {
+                    "class" => merge_class(existing.value.as_ref(), &value),
+                    "style" => merge_style(existing.value.as_ref(), &value),
+                    _ => value,
+                };
+                existing.value = StrTendril::from_str(value.as_str()).unwrap();
+            } else {
+                attrs_mut.push(html5ever::Attribute {
+                    name: QualName::new(
+                        template.prefix.clone(),
+                        template.ns.clone(),
+                        html5ever::LocalName::from(name.as_str()),
+                    ),
+                    value: StrTendril::from_str(value.as_str()).unwrap(),
+                });
+            }
+        }
     }
 }
 
@@ -597,17 +621,46 @@ fn children_for_traversal(handle: &Handle) -> Vec<Handle> {
     handle.children.borrow().iter().cloned().collect()
 }
 
-// Process directives on a node
+fn render_targets(node: &Handle, engine: &mut Engine) -> Result<Vec<Handle>> {
+    let mut rendered = Vec::new();
+    let mut if_chain = IfChain::default();
+
+    for target in expand_targets(node) {
+        if take_v_pre(&target) {
+            if_chain.reset();
+            rendered.push(target);
+            continue;
+        }
+
+        if is_non_whitespace_text_node(&target) {
+            if_chain.reset();
+        }
+
+        match apply_directives(&target, engine, &mut if_chain)? {
+            Some(nodes) => rendered.extend(nodes),
+            None if traverse(&target, engine)? => rendered.push(target),
+            None => {}
+        }
+    }
+
+    Ok(rendered)
+}
+
+// Apply structural directives on a node.
 // Returns None to keep node, Some(vec) to replace
-fn process_directives(
+fn apply_directives(
     node: &Handle,
     engine: &mut Engine,
-    if_chain_active: &mut bool,
-    if_chain_matched: &mut bool,
+    if_chain: &mut IfChain,
 ) -> Result<Option<Vec<Handle>>> {
     let NodeData::Element { attrs, .. } = &node.data else {
         return Ok(None);
     };
+
+    if attrs.borrow().is_empty() {
+        if_chain.reset();
+        return Ok(None);
+    }
 
     let directive_if = find_and_remove_directive(attrs, "v-if");
     let directive_else_if = find_and_remove_directive(attrs, "v-else-if");
@@ -617,39 +670,6 @@ fn process_directives(
         directive,
         kind,
         expression,
-    };
-    let render_targets = |node: &Handle, engine: &mut Engine| -> Result<Vec<Handle>> {
-        let mut rendered = Vec::new();
-        let mut child_if_chain_active = false;
-        let mut child_if_chain_matched = false;
-
-        for target in expand_targets(node) {
-            if take_v_pre(&target) {
-                child_if_chain_active = false;
-                child_if_chain_matched = false;
-                rendered.push(target);
-                continue;
-            }
-
-            if is_non_whitespace_text_node(&target) {
-                child_if_chain_active = false;
-                child_if_chain_matched = false;
-            }
-
-            let replacement = process_directives(
-                &target,
-                engine,
-                &mut child_if_chain_active,
-                &mut child_if_chain_matched,
-            )?;
-
-            if let Some(nodes) = replacement {
-                rendered.extend(nodes);
-            } else if traverse(&target, engine)? {
-                rendered.push(target);
-            }
-        }
-        Ok(rendered)
     };
 
     let branch_directives = [
@@ -675,9 +695,9 @@ fn process_directives(
                 Some(expr),
             ));
         }
-        *if_chain_active = true;
-        *if_chain_matched = engine.eval_bool(&expr).unwrap_or(false);
-        return Ok(Some(if *if_chain_matched {
+        if_chain.active = true;
+        if_chain.matched = engine.eval_bool(&expr).unwrap_or(false);
+        return Ok(Some(if if_chain.matched {
             render_targets(node, engine)?
         } else {
             Vec::new()
@@ -693,18 +713,18 @@ fn process_directives(
                 Some(expr),
             ));
         }
-        if !*if_chain_active {
+        if !if_chain.active {
             return Err(invalid_directive(
                 Directive::ElseIf,
                 DirectiveErrorKind::MissingAdjacentConditional,
                 Some(expr),
             ));
         }
-        if *if_chain_matched {
+        if if_chain.matched {
             return Ok(Some(Vec::new()));
         }
-        *if_chain_matched = engine.eval_bool(&expr).unwrap_or(false);
-        return Ok(Some(if *if_chain_matched {
+        if_chain.matched = engine.eval_bool(&expr).unwrap_or(false);
+        return Ok(Some(if if_chain.matched {
             render_targets(node, engine)?
         } else {
             Vec::new()
@@ -720,39 +740,39 @@ fn process_directives(
                 Some(expr),
             ));
         }
-        if !*if_chain_active {
+        if !if_chain.active {
             return Err(invalid_directive(
                 Directive::Else,
                 DirectiveErrorKind::MissingAdjacentConditional,
                 None,
             ));
         }
-        *if_chain_active = false;
-        return Ok(Some(if *if_chain_matched {
+        if_chain.active = false;
+        return Ok(Some(if if_chain.matched {
             Vec::new()
         } else {
-            *if_chain_matched = true;
+            if_chain.matched = true;
             render_targets(node, engine)?
         }));
     }
 
-    *if_chain_active = false;
+    if_chain.reset();
 
     // v-for
     Ok(match directive_for {
-        Some(expr) => Some(process_for(node, engine, &expr)?),
+        Some(expr) => Some(render_for(node, engine, &expr)?),
         None => None,
     })
 }
 
-struct ForExpression {
+struct ForExpr {
     binding: ForBinding,
-    iterable_expr: String,
+    iter: String,
 }
 
-// Process for directive
-fn process_for(node: &Handle, engine: &mut Engine, expr: &str) -> Result<Vec<Handle>> {
-    let expression = parse_for_expression(engine, expr).ok_or_else(|| Error::InvalidDirective {
+// Render v-for.
+fn render_for(node: &Handle, engine: &mut Engine, expr: &str) -> Result<Vec<Handle>> {
+    let for_expr = parse_for_expr(engine, expr).ok_or_else(|| Error::InvalidDirective {
         directive: Directive::For,
         kind: DirectiveErrorKind::InvalidExpression,
         expression: Some(expr.to_string()),
@@ -760,13 +780,13 @@ fn process_for(node: &Handle, engine: &mut Engine, expr: &str) -> Result<Vec<Han
 
     let indent_opt = get_indent(node);
     let mut result_nodes = Vec::new();
-    let mut render_iteration = |engine: &mut Engine, slots: Vec<JsValue>| -> Result<()> {
+    let mut render_iteration = |engine: &mut Engine, slots: &[JsValue]| -> Result<()> {
         engine.enter_scope().map_err(|err| Error::Internal {
             message: format!("failed to manage JavaScript scope: {err}"),
         })?;
 
-        let result = if engine.bind_for_slots(&expression.binding, slots) {
-            process_for_iteration(node, engine, &indent_opt, &mut result_nodes)
+        let result = if engine.bind_for_slots(&for_expr.binding, slots) {
+            render_for_item(node, engine, &indent_opt, &mut result_nodes)
         } else {
             Ok(())
         };
@@ -775,22 +795,27 @@ fn process_for(node: &Handle, engine: &mut Engine, expr: &str) -> Result<Vec<Han
         result
     };
 
-    let iterable = match engine.eval_expr(expression.iterable_expr.trim()) {
+    let iterable = match engine.eval_expr(for_expr.iter.trim()) {
         Ok(iterable) => iterable,
         Err(_) => return Ok(result_nodes),
     };
 
     match iterable.variant() {
         JsVariant::Object(obj) if obj.is_array() => {
-            let items = array_values(engine, &obj);
-            for (idx, item) in items.into_iter().enumerate() {
-                render_iteration(engine, vec![item, JsValue::new(idx)])?;
+            let Some(length) = array_length(engine, &obj) else {
+                return Ok(result_nodes);
+            };
+            for (idx, item_idx) in (0..length).enumerate() {
+                let item = obj
+                    .get(item_idx, &mut engine.context)
+                    .unwrap_or_else(|_| JsValue::undefined());
+                render_iteration(engine, &[item, JsValue::new(idx)])?;
             }
         }
         JsVariant::Object(obj) => {
             if let Some(items) = iterable_values(engine, iterable.clone()) {
                 for (idx, item) in items.into_iter().enumerate() {
-                    render_iteration(engine, vec![item, JsValue::new(idx)])?;
+                    render_iteration(engine, &[item, JsValue::new(idx)])?;
                 }
             } else {
                 let keys = object_keys(engine, iterable.clone());
@@ -801,18 +826,18 @@ fn process_for(node: &Handle, engine: &mut Engine, expr: &str) -> Result<Vec<Han
                     let value = obj
                         .get(key_string.clone(), &mut engine.context)
                         .unwrap_or(JsValue::undefined());
-                    render_iteration(engine, vec![value, key, JsValue::new(idx)])?;
+                    render_iteration(engine, &[value, key, JsValue::new(idx)])?;
                 }
             }
         }
         JsVariant::Integer32(val) => {
             for (idx, num) in (1..=val).enumerate() {
-                render_iteration(engine, vec![JsValue::new(num), JsValue::new(idx)])?;
+                render_iteration(engine, &[JsValue::new(num), JsValue::new(idx)])?;
             }
         }
         JsVariant::String(val) => {
             for (idx, ch) in val.to_std_string_escaped().chars().enumerate() {
-                render_iteration(engine, vec![JsValue::new(ch), JsValue::new(idx)])?;
+                render_iteration(engine, &[JsValue::new(ch), JsValue::new(idx)])?;
             }
         }
         _ => {}
@@ -822,10 +847,7 @@ fn process_for(node: &Handle, engine: &mut Engine, expr: &str) -> Result<Vec<Han
 }
 
 fn array_values(engine: &mut Engine, obj: &boa_engine::object::JsObject) -> Vec<JsValue> {
-    let Ok(array) = JsArray::from_object(obj.clone()) else {
-        return Vec::new();
-    };
-    let Ok(length) = array.length(&mut engine.context) else {
+    let Some(length) = array_length(engine, obj) else {
         return Vec::new();
     };
 
@@ -835,6 +857,13 @@ fn array_values(engine: &mut Engine, obj: &boa_engine::object::JsObject) -> Vec<
                 .unwrap_or_else(|_| JsValue::undefined())
         })
         .collect()
+}
+
+fn array_length(engine: &mut Engine, obj: &boa_engine::object::JsObject) -> Option<u64> {
+    JsArray::from_object(obj.clone())
+        .ok()?
+        .length(&mut engine.context)
+        .ok()
 }
 
 fn object_keys(engine: &mut Engine, value: JsValue) -> Vec<JsValue> {
@@ -865,8 +894,8 @@ fn iterable_values(engine: &mut Engine, value: JsValue) -> Option<Vec<JsValue>> 
     }
 }
 
-fn parse_for_expression(engine: &mut Engine, expr: &str) -> Option<ForExpression> {
-    for (binding_raw, iterable_expr) in split_for_expressions(expr) {
+fn parse_for_expr(engine: &mut Engine, expr: &str) -> Option<ForExpr> {
+    for (binding_raw, iterable_expr) in split_for_expr(expr) {
         let binding_raw = binding_raw.trim();
         let binding_raw = if binding_raw.starts_with('(') && binding_raw.ends_with(')') {
             binding_raw[1..binding_raw.len() - 1].trim()
@@ -874,9 +903,9 @@ fn parse_for_expression(engine: &mut Engine, expr: &str) -> Option<ForExpression
             binding_raw
         };
         if let Some(binding) = engine.parse_for_binding(binding_raw) {
-            return Some(ForExpression {
+            return Some(ForExpr {
                 binding,
-                iterable_expr: iterable_expr.trim().to_string(),
+                iter: iterable_expr.trim().to_string(),
             });
         }
     }
@@ -884,7 +913,7 @@ fn parse_for_expression(engine: &mut Engine, expr: &str) -> Option<ForExpression
     None
 }
 
-fn split_for_expressions(expr: &str) -> impl Iterator<Item = (&str, &str)> {
+fn split_for_expr(expr: &str) -> impl Iterator<Item = (&str, &str)> {
     expr.char_indices().filter_map(|(idx, _)| {
         for keyword in ["in", "of"] {
             if is_keyword_at(expr, idx, keyword) {
@@ -916,8 +945,8 @@ fn is_identifier_continue(ch: char) -> bool {
     ch == '$' || ch == '_' || ch.is_alphanumeric()
 }
 
-// Process a single iteration of v-for
-fn process_for_iteration(
+// Render a single v-for item.
+fn render_for_item(
     node: &Handle,
     engine: &mut Engine,
     indent_opt: &Option<String>,
@@ -939,29 +968,21 @@ fn process_for_iteration(
         nodes.push(node);
     };
 
-    let mut child_if_chain_active = false;
-    let mut child_if_chain_matched = false;
+    let mut if_chain = IfChain::default();
 
     for (target_idx, target) in targets.into_iter().enumerate() {
         if take_v_pre(&target) {
-            child_if_chain_active = false;
-            child_if_chain_matched = false;
+            if_chain.reset();
             let should_indent = target_idx > 0 && !iteration_nodes.is_empty();
             push_node(&mut iteration_nodes, target, should_indent);
             continue;
         }
 
         if is_non_whitespace_text_node(&target) {
-            child_if_chain_active = false;
-            child_if_chain_matched = false;
+            if_chain.reset();
         }
 
-        let replacement = process_directives(
-            &target,
-            engine,
-            &mut child_if_chain_active,
-            &mut child_if_chain_matched,
-        )?;
+        let replacement = apply_directives(&target, engine, &mut if_chain)?;
 
         match replacement {
             Some(new_nodes) => {
