@@ -106,6 +106,21 @@ fn pre_with_bind() {
     );
 }
 
+#[test]
+fn pre_leaves_a_static_style_alone() {
+    // Vue still normalizes it here; prevue reads `v-pre` as covering every
+    // rendering step.
+    assert_render_body_eq!(
+        r#"<div>
+        <div v-pre style="marginTop: 1px">{{ message }}</div>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <div style="marginTop: 1px">{{ message }}</div>
+    </div>"#,
+    );
+}
+
 // === Nested Elements ===
 
 #[test]

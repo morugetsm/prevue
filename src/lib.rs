@@ -6,17 +6,24 @@ use markup5ever_rcdom::{Handle, NodeData, SerializableHandle};
 use serde::Serialize;
 
 mod attr_value;
+mod directive;
 mod dom;
 mod engine;
 mod error;
 mod indent;
 mod interpolation;
 mod template;
-use attr_value::{AttrEdits, apply_modifiers, normalize_bound_attribute, validate_attribute_name};
+use attr_value::{
+    AttrEdits, apply_modifiers, attribute_name_for, is_ignored_prop, is_textarea_value,
+    normalize_bound_attribute, normalize_style_attribute, strip_attr_marker,
+    validate_attribute_name,
+};
+use directive::Unhandled;
 use dom::{
-    clone_node, create_text_node, expand_targets, is_element, is_inert_template,
-    is_non_whitespace_text_node, is_raw_text_element, is_whitespace_text_node, parse_html_fragment,
-    replace_element_children, replace_node_in_parent, take_attribute, text_content,
+    clone_node, create_text_node, expand_targets, hoist_template_contents, is_element,
+    is_inert_template, is_non_whitespace_text_node, is_raw_text_element, is_void_element,
+    is_whitespace_text_node, parse_html_fragment, replace_element_children, replace_node_in_parent,
+    take_attribute, text_content,
 };
 use engine::{Engine, ForBinding};
 pub use error::{Directive, DirectiveErrorKind, Error, Result};
@@ -116,6 +123,7 @@ impl Renderer {
     fn render_document(&mut self, document: &Handle, data: impl Serialize) -> Result<String> {
         self.engine.install_data(data)?;
         traverse(document, &mut self.engine)?;
+        hoist_template_contents(document);
 
         let mut buffer = Vec::new();
         serialize(
@@ -339,14 +347,30 @@ fn render_content(handle: &Handle, engine: &mut Engine) -> Result<Walk> {
 
             let mut action = Walk::Children;
             let mut edits = AttrEdits::default();
-            let mut bound: Vec<(usize, String)> = Vec::new();
             let attrs_ref = attrs.borrow();
 
             for (i, attr) in attrs_ref.iter().enumerate() {
                 let name_ref: &str = attr.name.local.as_ref();
 
+                // Vue drops these whether they were written statically or bound.
+                if is_ignored_prop(name_ref) {
+                    edits.remove(i);
+                    continue;
+                }
+
+                // Vue rewrites a static `style` into a binding, so it takes the
+                // same normalization.
+                if name_ref == "style" {
+                    if let Some(value) = normalize_style_attribute(attr.value.as_ref()) {
+                        edits.set(i, "style".to_string(), value);
+                    }
+                    continue;
+                }
+
                 if name_ref == "v-text" {
-                    if let Some(value) = engine.eval_str(attr.value.as_ref()) {
+                    if let Some(value) = engine.eval_str(attr.value.as_ref())
+                        && !is_void_element(name)
+                    {
                         replace_element_children(handle, vec![create_text_node(&value)]);
                         action = Walk::Done;
                     }
@@ -355,9 +379,24 @@ fn render_content(handle: &Handle, engine: &mut Engine) -> Result<Walk> {
                 }
 
                 if name_ref == "v-html" {
-                    if let Some(value) = engine.eval_str(attr.value.as_ref()) {
+                    if let Some(value) = engine.eval_str(attr.value.as_ref())
+                        && !is_void_element(name)
+                    {
                         replace_element_children(handle, parse_html_fragment(name, &value));
                         action = Walk::Done;
+                    }
+                    edits.remove(i);
+                    continue;
+                }
+
+                // An empty expression evaluates to `undefined`, so it hides.
+                if name_ref == "v-show" {
+                    if !engine.eval_bool(attr.value.trim()).unwrap_or(false) {
+                        edits.add_last(
+                            "style".to_string(),
+                            attr.name.clone(),
+                            "display: none;".to_string(),
+                        );
                     }
                     edits.remove(i);
                     continue;
@@ -373,15 +412,33 @@ fn render_content(handle: &Handle, engine: &mut Engine) -> Result<Walk> {
                                 continue;
                             };
                             let key = key_string.to_std_string_escaped();
-                            let value = engine.get_prop(&obj, key_string);
-                            let value = normalize_bound_attribute(engine, &key, &value);
-                            if let Some(value) = value {
-                                validate_attribute_name(&key)?;
-                                edits.add(key, attr.name.clone(), value);
+                            if is_ignored_prop(&key) {
+                                continue;
                             }
+
+                            let raw = engine.get_prop(&obj, key_string);
+                            let attr_name = attribute_name_for(name, strip_attr_marker(key));
+
+                            if is_textarea_value(name, &attr_name) {
+                                if let Some(value) = engine.stringify(&raw) {
+                                    replace_element_children(handle, vec![create_text_node(&value)]);
+                                    action = Walk::Done;
+                                }
+                                continue;
+                            }
+
+                            let Some(value) = normalize_bound_attribute(engine, &attr_name, &raw)
+                            else {
+                                continue;
+                            };
+                            validate_attribute_name(&attr_name)?;
+                            edits.add(i, attr_name, attr.name.clone(), value);
                         }
-                        edits.remove(i);
                     }
+
+                    // The directive never belongs in the output, whatever it
+                    // evaluated to.
+                    edits.remove(i);
                     continue;
                 }
 
@@ -393,14 +450,14 @@ fn render_content(handle: &Handle, engine: &mut Engine) -> Result<Walk> {
                     let value_expr = attr.value.trim();
                     let (arg, modifiers) = split_modifiers(arg_raw);
 
-                    let name = match dynamic_arg(arg) {
+                    let key = match dynamic_arg(arg) {
                         // A dynamic name has no expression to fall back on.
                         Some(_) if value_expr.is_empty() => {
                             edits.remove(i);
                             continue;
                         }
                         Some(inner) => match engine.eval_str(inner) {
-                            Some(name) if !name.is_empty() => name,
+                            Some(key) if !key.is_empty() => key,
                             _ => {
                                 edits.remove(i);
                                 continue;
@@ -408,7 +465,12 @@ fn render_content(handle: &Handle, engine: &mut Engine) -> Result<Walk> {
                         },
                         None => arg.to_string(),
                     };
-                    let name = apply_modifiers(name, modifiers)?;
+                    let key = apply_modifiers(key, modifiers)?;
+                    if is_ignored_prop(&key) {
+                        edits.remove(i);
+                        continue;
+                    }
+                    let attr_name = attribute_name_for(name, strip_attr_marker(key));
 
                     let target = if value_expr.is_empty() {
                         arg
@@ -416,23 +478,43 @@ fn render_content(handle: &Handle, engine: &mut Engine) -> Result<Walk> {
                         value_expr
                     };
 
-                    let value = engine
-                        .eval_expr(target)
-                        .ok()
-                        .and_then(|value| normalize_bound_attribute(engine, &name, &value));
-                    match (matches!(name.as_str(), "class" | "style"), value) {
-                        (true, Some(value)) => {
-                            edits.add(name, attr.name.clone(), value);
-                            edits.remove(i);
+                    let raw = engine.eval_expr(target).ok();
+
+                    if is_textarea_value(name, &attr_name) {
+                        if let Some(value) = raw.and_then(|value| engine.stringify(&value)) {
+                            replace_element_children(handle, vec![create_text_node(&value)]);
+                            action = Walk::Done;
                         }
-                        (false, Some(value)) => {
-                            validate_attribute_name(&name)?;
-                            shadow_duplicates(&attrs_ref, &bound, i, &name, &mut edits);
-                            bound.push((i, name.clone()));
-                            edits.set(i, name, value);
-                        }
-                        _ => edits.remove(i),
+                        edits.remove(i);
+                        continue;
                     }
+
+                    let value =
+                        raw.and_then(|value| normalize_bound_attribute(engine, &attr_name, &value));
+
+                    match value {
+                        Some(value) if matches!(attr_name.as_str(), "class" | "style") => {
+                            edits.add(i, attr_name, attr.name.clone(), value);
+                        }
+                        Some(value) => {
+                            validate_attribute_name(&attr_name)?;
+                            edits.set(i, attr_name, value);
+                        }
+                        None => edits.remove(i),
+                    }
+                    continue;
+                }
+
+                // Whatever is left is a Vue directive with nothing to render, or
+                // a misspelling of one.
+                match directive::classify(name_ref) {
+                    Some(Unhandled::Unrendered) => edits.remove(i),
+                    Some(Unhandled::Unknown) => {
+                        return Err(Error::UnknownDirective {
+                            name: name_ref.to_string(),
+                        });
+                    }
+                    None => {}
                 }
             }
 
@@ -471,29 +553,16 @@ fn dynamic_arg(arg: &str) -> Option<&str> {
     arg.strip_prefix('[')?.strip_suffix(']')
 }
 
-/// Leave a binding as the only source for its name. `bound` holds only earlier
-/// bindings, so two of them cannot delete each other and lose both values.
-fn shadow_duplicates(
-    attrs: &[html5ever::Attribute],
-    bound: &[(usize, String)],
-    binding: usize,
-    name: &str,
-    edits: &mut AttrEdits,
-) {
-    for (idx, attr) in attrs.iter().enumerate() {
-        let local: &str = attr.name.local.as_ref();
-        let is_binding =
-            local.starts_with(':') || local == "v-bind" || local.starts_with("v-bind:");
-
-        if idx != binding && local == name && !is_binding {
-            edits.remove(idx);
-        }
-    }
-
-    for (idx, resolved) in bound {
-        if resolved == name {
-            edits.remove(*idx);
-        }
+/// Render a node whose branch was taken. Vue gives `v-if` the higher priority
+/// but still runs a `v-for` on the same element inside it.
+fn render_branch(
+    node: &Handle,
+    engine: &mut Engine,
+    directive_for: Option<&str>,
+) -> Result<Vec<Handle>> {
+    match directive_for {
+        Some(expr) => render_for(node, engine, expr),
+        None => render_targets(node, engine),
     }
 }
 
@@ -562,7 +631,7 @@ fn apply_directives(
         let matched = engine.eval_bool(&expr).unwrap_or(false);
         if_chain.set_matched(matched);
         return Ok(Some(if matched {
-            render_targets(node, engine)?
+            render_branch(node, engine, directive_for.as_deref())?
         } else {
             Vec::new()
         }));
@@ -589,7 +658,7 @@ fn apply_directives(
         let matched = engine.eval_bool(&expr).unwrap_or(false);
         if_chain.set_matched(matched);
         return Ok(Some(if matched {
-            render_targets(node, engine)?
+            render_branch(node, engine, directive_for.as_deref())?
         } else {
             Vec::new()
         }));
@@ -616,14 +685,14 @@ fn apply_directives(
         return Ok(Some(if already_matched {
             Vec::new()
         } else {
-            render_targets(node, engine)?
+            render_branch(node, engine, directive_for.as_deref())?
         }));
     }
 
     if_chain.reset();
 
-    Ok(match directive_for {
-        Some(expr) => Some(render_for(node, engine, &expr)?),
+    Ok(match directive_for.as_deref() {
+        Some(expr) => Some(render_for(node, engine, expr)?),
         None => None,
     })
 }
@@ -683,6 +752,22 @@ fn render_for_iterations(
                 render_iteration(engine, &[item, JsValue::new(idx)])?;
             }
         }
+        JsVariant::String(val) => {
+            for (idx, ch) in val.to_std_string_escaped().chars().enumerate() {
+                render_iteration(engine, &[JsValue::new(ch), JsValue::new(idx)])?;
+            }
+        }
+        JsVariant::Integer32(count) => {
+            for (idx, num) in (1..=count).enumerate() {
+                render_iteration(engine, &[JsValue::new(num), JsValue::new(idx)])?;
+            }
+        }
+        // A computed number arrives as a float, so `6 / 2` is a range too.
+        JsVariant::Float64(count) if is_for_range(count) => {
+            for (idx, num) in (1..=count as i32).enumerate() {
+                render_iteration(engine, &[JsValue::new(num), JsValue::new(idx)])?;
+            }
+        }
         JsVariant::Object(obj) => {
             if let Some(items) = engine.iterable_values(iterable.clone()) {
                 for (idx, item) in items.into_iter().enumerate() {
@@ -699,20 +784,16 @@ fn render_for_iterations(
                 }
             }
         }
-        JsVariant::Integer32(val) => {
-            for (idx, num) in (1..=val).enumerate() {
-                render_iteration(engine, &[JsValue::new(num), JsValue::new(idx)])?;
-            }
-        }
-        JsVariant::String(val) => {
-            for (idx, ch) in val.to_std_string_escaped().chars().enumerate() {
-                render_iteration(engine, &[JsValue::new(ch), JsValue::new(idx)])?;
-            }
-        }
         _ => {}
     }
 
     Ok(result_nodes)
+}
+
+/// Vue's `renderList` takes a number only as a non-negative integer range. The
+/// upper bound is prevue's own, matching what the integer branch can hold.
+fn is_for_range(count: f64) -> bool {
+    count.fract() == 0.0 && (0.0..=f64::from(i32::MAX)).contains(&count)
 }
 
 fn parse_for_expr(engine: &mut Engine, expr: &str) -> Option<ForExpr> {

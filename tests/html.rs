@@ -193,3 +193,16 @@ fn html_text_conflict_errors() {
     assert!(matches!(err, Error::ConflictingDirectives { directives }
         if directives == vec![Directive::Text, Directive::Html]));
 }
+
+#[test]
+fn html_on_a_void_element_is_dropped() {
+    assert_render_body_eq!(
+        r#"<div>
+        <img v-html="v">
+    </div>"#,
+        json!({ "v": "<b>x</b>" }),
+        r#"<div>
+        <img>
+    </div>"#,
+    );
+}

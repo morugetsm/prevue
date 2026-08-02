@@ -13,7 +13,7 @@ fn template_basic() {
     </div>"#,
         json!({}),
         r#"<div>
-        <template></template>
+        <template>Hello</template>
     </div>"#,
     );
 }
@@ -297,7 +297,9 @@ fn template_pre() {
     </div>"#,
         json!({}),
         r#"<div>
-        <template></template>
+        <template>
+            <div>DIV</div>
+        </template>
     </div>"#,
     );
 }
@@ -313,7 +315,7 @@ fn template_pre_inner() {
         json!({}),
         r#"<div>
         <div>
-            <template></template>
+            <template>TEMPLATE</template>
         </div>
     </div>"#,
     );
@@ -327,7 +329,7 @@ fn template_pre_with_if() {
     </div>"#,
         json!({}),
         r#"<div>
-        <template v-if="false"></template>
+        <template v-if="false">Hello</template>
     </div>"#,
     );
 }
@@ -342,7 +344,35 @@ fn template_attrs_no_directive() {
     </div>"#,
         json!({}),
         r#"<div>
-        <template data-x="y"></template>
+        <template data-x="y">IGNORED</template>
+    </div>"#,
+    );
+}
+
+#[test]
+fn template_contents_survive_serialization() {
+    // A `<template>` keeps its content in a separate document that the
+    // serializer does not walk, so it has to be moved back before output.
+    assert_render_body_eq!(
+        r#"<div>
+        <template><p>{{ v }}</p><span>plain</span></template>
+    </div>"#,
+        json!({ "v": "x" }),
+        r#"<div>
+        <template><p>{{ v }}</p><span>plain</span></template>
+    </div>"#,
+    );
+}
+
+#[test]
+fn nested_template_contents_survive_serialization() {
+    assert_render_body_eq!(
+        r#"<div>
+        <template><template>deep</template></template>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <template><template>deep</template></template>
     </div>"#,
     );
 }

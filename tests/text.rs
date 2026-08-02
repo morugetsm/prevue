@@ -396,3 +396,21 @@ fn text_multiple_different_values() {
     </div>"#,
     );
 }
+
+// === Void Elements ===
+
+#[test]
+fn text_on_a_void_element_is_dropped() {
+    // HTML gives `<input>` no children, so the text would escape the element.
+    assert_render_body_eq!(
+        r#"<div>
+        <input v-text="v">
+        <br v-text="v">
+    </div>"#,
+        json!({ "v": "x" }),
+        r#"<div>
+        <input>
+        <br>
+    </div>"#,
+    );
+}

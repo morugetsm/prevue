@@ -135,6 +135,13 @@ pub enum Error {
         name: String,
     },
 
+    /// An attribute spelled like a directive that Vue does not define.
+    #[error("unknown directive {name:?}")]
+    UnknownDirective {
+        /// The attribute name as written.
+        name: String,
+    },
+
     /// Render data could not be installed into the JavaScript scope.
     ///
     /// `field` is `None` when initializing the root data alias `$`, and

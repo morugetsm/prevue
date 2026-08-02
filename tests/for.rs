@@ -417,6 +417,49 @@ fn for_number_zero() {
     );
 }
 
+#[test]
+fn for_number_from_a_computed_expression() {
+    // JavaScript has one number type; the engine reports a computed one as a
+    // float, and Vue takes any number.
+    assert_render_body_eq!(
+        r#"<div>
+        <i v-for="n in Number(3)">{{ n }}</i>
+        <i v-for="n in Math.floor(3.7)">{{ n }}</i>
+        <i v-for="n in parseInt('3')">{{ n }}</i>
+        <i v-for="n in size">{{ n }}</i>
+    </div>"#,
+        json!({ "size": 3.0 }),
+        r#"<div>
+        <i>1</i>
+        <i>2</i>
+        <i>3</i>
+        <i>1</i>
+        <i>2</i>
+        <i>3</i>
+        <i>1</i>
+        <i>2</i>
+        <i>3</i>
+        <i>1</i>
+        <i>2</i>
+        <i>3</i>
+    </div>"#,
+    );
+}
+
+#[test]
+fn for_number_needs_a_non_negative_integer() {
+    assert_render_body_eq!(
+        r#"<div>
+        <i v-for="n in 3.5">{{ n }}</i>
+        <i v-for="n in -3">{{ n }}</i>
+        <i v-for="n in 2 ** 40">{{ n }}</i>
+    </div>"#,
+        json!({}),
+        r#"<div>
+    </div>"#,
+    );
+}
+
 // === String ===
 
 #[test]

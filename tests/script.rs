@@ -230,7 +230,11 @@ fn script_plain_template_inert() {
     <p>{{ helper() }}</p>
     "#,
         json!({}),
-        r#"<html><head><template></template>
+        r#"<html><head><template>
+        <script type="prevue">
+            const helper = () => 'template';
+        </script>
+    </template>
     </head><body><p></p>
     </body></html>"#,
     );

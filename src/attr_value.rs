@@ -1,7 +1,7 @@
 use std::{borrow::Cow, cell::RefCell};
 
 use boa_engine::{JsValue, JsVariant};
-use html5ever::{QualName, tendril::StrTendril};
+use html5ever::{QualName, ns, tendril::StrTendril};
 use serde_json::Value as JsonValue;
 
 use crate::{Directive, DirectiveErrorKind, Error, Result, engine::Engine};
@@ -88,6 +88,10 @@ pub(crate) fn apply_modifiers(name: String, modifiers: &str) -> Result<String> {
         .filter(|modifier| !modifier.is_empty())
         .try_fold(name, |name, modifier| match modifier {
             "camel" => Ok(camelize(&name)),
+            // Vue's server compiler drops `.prop`, since no DOM property exists
+            // to set; a `.`-prefixed key arriving through `v-bind` still does.
+            "prop" => Ok(name),
+            "attr" => Ok(format!("^{name}")),
             unknown => Err(Error::InvalidDirective {
                 directive: Directive::Bind,
                 kind: DirectiveErrorKind::UnknownModifier,
@@ -99,26 +103,73 @@ pub(crate) fn apply_modifiers(name: String, modifiers: &str) -> Result<String> {
 /// `view-box` becomes `viewBox`, matching Vue's `camelize`.
 fn camelize(name: &str) -> String {
     let mut camelized = String::with_capacity(name.len());
-    let mut chars = name.chars();
+    let mut chars = name.chars().peekable();
 
     while let Some(ch) = chars.next() {
-        if ch != '-' {
+        // Only a `-` directly before a word character is consumed. Peeking
+        // leaves the rest to start a match of its own, as the regex does.
+        let word = ch == '-'
+            && chars
+                .peek()
+                .is_some_and(|next| next.is_ascii_alphanumeric() || *next == '_');
+
+        if word {
+            camelized.extend(chars.next().map(|next| next.to_ascii_uppercase()));
+        } else {
             camelized.push(ch);
-            continue;
-        }
-        match chars.next() {
-            Some(next) if next.is_ascii_alphanumeric() || next == '_' => {
-                camelized.push(next.to_ascii_uppercase());
-            }
-            Some(next) => {
-                camelized.push('-');
-                camelized.push(next);
-            }
-            None => camelized.push('-'),
         }
     }
 
     camelized
+}
+
+/// Props Vue's `ssrRenderAttrs` never writes: its own bookkeeping, and event
+/// listeners like `onClick` — the plain `onclick` attribute still goes through.
+pub(crate) fn is_ignored_prop(key: &str) -> bool {
+    matches!(
+        key,
+        "key" | "ref" | "innerHTML" | "textContent" | "ref_key" | "ref_for"
+    ) || is_on(key)
+        // A `.`-prefixed key is a DOM property, which has no HTML spelling.
+        || key.starts_with('.')
+}
+
+/// Vue marks a forced attribute with `^`; the marker itself never reaches HTML.
+pub(crate) fn strip_attr_marker(key: String) -> String {
+    match key.strip_prefix('^') {
+        Some(rest) => rest.to_string(),
+        None => key,
+    }
+}
+
+/// Vue's `isOn`: `on` followed by a character that is not lowercase ASCII.
+fn is_on(key: &str) -> bool {
+    key.strip_prefix("on")
+        .and_then(|rest| rest.chars().next())
+        .is_some_and(|ch| !ch.is_ascii_lowercase())
+}
+
+/// Vue keeps a prop name as written on SVG, MathML and custom elements, and
+/// folds everything else down to an HTML attribute name.
+pub(crate) fn attribute_name_for(tag: &QualName, key: String) -> String {
+    if tag.ns == ns!(svg) || tag.ns == ns!(mathml) || tag.local.contains('-') {
+        return key;
+    }
+
+    match key.as_str() {
+        "acceptCharset" => "accept-charset".to_string(),
+        "className" => "class".to_string(),
+        "htmlFor" => "for".to_string(),
+        "httpEquiv" => "http-equiv".to_string(),
+        _ if key.bytes().any(|byte| byte.is_ascii_uppercase()) => key.to_ascii_lowercase(),
+        _ => key,
+    }
+}
+
+/// Vue renders a bound `value` on a textarea as its content, since the element
+/// has no value attribute.
+pub(crate) fn is_textarea_value(tag: &QualName, name: &str) -> bool {
+    name == "value" && tag.local.as_ref() == "textarea"
 }
 
 /// Vue's `isSSRSafeAttrName`, plus `\0` and `\r` — rejecting more than Vue can
@@ -203,7 +254,7 @@ fn collect_declarations(value: &JsonValue, declarations: &mut Declarations) {
         JsonValue::Object(values) => {
             for (name, value) in values {
                 if let Some(value) = declaration_value(value) {
-                    set_declaration(declarations, hyphenate(name).into_owned(), value);
+                    set_declaration(declarations, name.clone(), value);
                 }
             }
         }
@@ -218,11 +269,13 @@ fn parse_string_style(css: &str) -> Declarations {
     let mut depth = 0usize;
     let mut start = 0;
 
+    // Vue collects into an object, so a repeated property keeps its place and
+    // takes the newer value.
     let mut push = |item: &str| {
         if let Some((name, value)) = item.split_once(':') {
             let name = name.trim();
             if !name.is_empty() {
-                declarations.push((name.to_string(), value.trim().to_string()));
+                set_declaration(&mut declarations, name.to_string(), value.trim().to_string());
             }
         }
     };
@@ -242,6 +295,13 @@ fn parse_string_style(css: &str) -> Declarations {
     push(&without_comments[start..]);
 
     declarations
+}
+
+/// Vue's `transformStyle` rewrites a static `style` attribute into a binding,
+/// so it takes the same normalization. `None` leaves the attribute as written.
+pub(crate) fn normalize_style_attribute(css: &str) -> Option<String> {
+    let declarations = parse_string_style(css);
+    (!declarations.is_empty()).then(|| stringify_style(&declarations))
 }
 
 fn strip_css_comments(css: &str) -> Cow<'_, str> {
@@ -272,33 +332,39 @@ fn declaration_value(value: &JsonValue) -> Option<String> {
     }
 }
 
+/// Vue hyphenates here rather than while collecting, so a key written in CSS
+/// and the same key written in JavaScript stay distinct until the very end.
+/// Custom properties are exempt, which is also what keeps their case.
 fn stringify_style(declarations: &Declarations) -> String {
     declarations
         .iter()
-        .map(|(name, value)| format!("{name}: {value};"))
+        .map(|(name, value)| {
+            let name = match name.starts_with("--") {
+                true => Cow::Borrowed(name.as_str()),
+                false => hyphenate(name),
+            };
+            format!("{name}: {value};")
+        })
         .collect::<Vec<_>>()
         .join(" ")
 }
 
-/// `viewBox` becomes `view-box`, the inverse of [`camelize`]. Matching Vue's
-/// `\B([A-Z])` the leading character is left alone, so `MozTransform` becomes
-/// `moz-transform` rather than `-moz-transform`.
+/// `viewBox` becomes `view-box`, the inverse of [`camelize`]. Vue's `\B([A-Z])`
+/// only holds after a word character, so `a-Bc` becomes `a-bc` rather than
+/// `a--bc`, and its `toLowerCase` reaches the whole string.
 fn hyphenate(name: &str) -> Cow<'_, str> {
-    // Custom properties keep their case; no camelCase hump means no rewriting.
-    if name.starts_with("--") || !name.bytes().any(|byte| byte.is_ascii_uppercase()) {
+    if name.is_ascii() && !name.bytes().any(|byte| byte.is_ascii_uppercase()) {
         return Cow::Borrowed(name);
     }
 
     let mut hyphenated = String::with_capacity(name.len() + 4);
-    for (idx, ch) in name.char_indices() {
-        if ch.is_ascii_uppercase() {
-            if idx > 0 {
-                hyphenated.push('-');
-            }
-            hyphenated.push(ch.to_ascii_lowercase());
-        } else {
-            hyphenated.push(ch);
+    let mut after_word = false;
+    for ch in name.chars() {
+        if after_word && ch.is_ascii_uppercase() {
+            hyphenated.push('-');
         }
+        after_word = ch.is_ascii_alphanumeric() || ch == '_';
+        hyphenated.extend(ch.to_lowercase());
     }
 
     Cow::Owned(hyphenated)
@@ -333,63 +399,107 @@ pub(crate) fn merge_style(existing: &str, value: &str) -> String {
     stringify_style(&declarations)
 }
 
+enum Op {
+    /// Rewrite the attribute at this position.
+    Set(String, String),
+    /// An attribute a directive produced at this position.
+    Add(String, QualName, String),
+}
+
 #[derive(Default)]
 pub(crate) struct AttrEdits {
-    sets: Vec<(usize, String, String)>,
+    ops: Vec<(usize, Op)>,
+    trailing: Vec<(String, QualName, String)>,
     removes: Vec<usize>,
-    adds: Vec<(String, QualName, String)>,
 }
 
 impl AttrEdits {
     pub(crate) fn set(&mut self, idx: usize, name: String, value: String) {
-        self.sets.push((idx, name, value));
+        self.ops.push((idx, Op::Set(name, value)));
     }
 
     pub(crate) fn remove(&mut self, idx: usize) {
         self.removes.push(idx);
     }
 
-    pub(crate) fn add(&mut self, name: String, template: QualName, value: String) {
-        self.adds.push((name, template, value));
+    pub(crate) fn add(&mut self, idx: usize, name: String, template: QualName, value: String) {
+        self.ops.push((idx, Op::Add(name, template, value)));
+    }
+
+    /// Vue merges directive props after everything the element wrote itself, so
+    /// `v-show` wins over a `style` binding no matter which came first.
+    pub(crate) fn add_last(&mut self, name: String, template: QualName, value: String) {
+        self.trailing.push((name, template, value));
     }
 
     pub(crate) fn apply(mut self, attrs: &RefCell<Vec<html5ever::Attribute>>) {
-        // Removal runs back to front below, which needs them in order.
-        self.removes.sort_unstable();
-        self.removes.dedup();
+        if self.ops.is_empty() && self.removes.is_empty() && self.trailing.is_empty() {
+            return;
+        }
+
+        // The walk below consumes ops in index order.
+        self.ops.sort_by_key(|(idx, _)| *idx);
 
         let mut attrs_mut = attrs.borrow_mut();
-        for (idx, name, value) in self.sets.iter().rev() {
-            attrs_mut[*idx].name.local = html5ever::LocalName::from(name.as_str());
-            attrs_mut[*idx].value = StrTendril::from(value.as_str());
-        }
-        for idx in self.removes.iter().rev() {
-            attrs_mut.remove(*idx);
-        }
-        drop(attrs_mut);
+        let mut merged = Vec::with_capacity(attrs_mut.len() + self.trailing.len());
+        let mut ops = self.ops.into_iter().peekable();
 
-        let mut attrs_mut = attrs.borrow_mut();
-        for (name, template, value) in self.adds {
-            if let Some(existing) = attrs_mut
-                .iter_mut()
-                .find(|attr| attr.name.local.as_ref() == name.as_str())
-            {
-                let value = match name.as_str() {
-                    "class" => merge_class(existing.value.as_ref(), &value),
-                    "style" => merge_style(existing.value.as_ref(), &value),
-                    _ => value,
-                };
-                existing.value = StrTendril::from(value.as_str());
-            } else {
-                attrs_mut.push(html5ever::Attribute {
-                    name: QualName::new(
-                        template.prefix.clone(),
-                        template.ns.clone(),
-                        html5ever::LocalName::from(name.as_str()),
-                    ),
-                    value: StrTendril::from(value.as_str()),
-                });
+        for (idx, attr) in attrs_mut.iter().enumerate() {
+            let mut consumed = false;
+            while let Some((_, op)) = ops.next_if(|(op_idx, _)| *op_idx == idx) {
+                push_merged(
+                    &mut merged,
+                    match op {
+                        Op::Set(name, value) => rename(&attr.name, &name, &value),
+                        Op::Add(name, template, value) => rename(&template, &name, &value),
+                    },
+                );
+                consumed = true;
+            }
+
+            if !consumed && !self.removes.contains(&idx) {
+                push_merged(&mut merged, attr.clone());
             }
         }
+
+        for (name, template, value) in self.trailing {
+            push_merged(&mut merged, rename(&template, &name, &value));
+        }
+
+        *attrs_mut = merged;
     }
+}
+
+/// An attribute carrying `template`'s namespace under a different name.
+fn rename(template: &QualName, name: &str, value: &str) -> html5ever::Attribute {
+    html5ever::Attribute {
+        name: QualName::new(
+            template.prefix.clone(),
+            template.ns.clone(),
+            html5ever::LocalName::from(name),
+        ),
+        value: StrTendril::from(value),
+    }
+}
+
+/// Vue's `mergeProps`: a repeated name keeps its first position and takes the
+/// newer value, except `class` and `style`, which merge instead.
+fn push_merged(attrs: &mut Vec<html5ever::Attribute>, attr: html5ever::Attribute) {
+    let Some(existing) = attrs
+        .iter_mut()
+        .find(|kept| kept.name.local == attr.name.local)
+    else {
+        attrs.push(attr);
+        return;
+    };
+
+    let merged = match existing.name.local.as_ref() {
+        "class" => merge_class(existing.value.as_ref(), attr.value.as_ref()),
+        "style" => merge_style(existing.value.as_ref(), attr.value.as_ref()),
+        _ => {
+            existing.value = attr.value;
+            return;
+        }
+    };
+    existing.value = StrTendril::from(merged.as_str());
 }

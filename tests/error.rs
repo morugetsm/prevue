@@ -27,6 +27,20 @@ fn content_directive_conflict() {
 }
 
 #[test]
+fn unknown_directive_error() {
+    for template in [r#"<div v-fi="a">x</div>"#, "<div v-els>x</div>", "<div v->x</div>"] {
+        let err = render(template, json!({})).unwrap_err();
+        assert!(matches!(err, Error::UnknownDirective { .. }), "{template}");
+    }
+}
+
+#[test]
+fn unknown_directive_names_the_attribute() {
+    let err = render(r#"<div v-els="a">x</div>"#, json!({})).unwrap_err();
+    assert!(matches!(err, Error::UnknownDirective { name } if name == "v-els"));
+}
+
+#[test]
 fn branch_directive_conflict() {
     let err = render(r#"<p v-if="true" v-else>text</p>"#, json!({})).unwrap_err();
     assert!(matches!(err, Error::ConflictingDirectives { directives }

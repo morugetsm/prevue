@@ -127,14 +127,26 @@ fn if_empty_expression_error() {
 
 #[test]
 fn if_priority_over_for() {
+    // The condition is evaluated outside the loop, but the loop still runs
+    // inside it — Vue compiles this to `show ? renderList(list, ...) : null`.
     assert_render_body_eq!(
-        r#"<div>
-        <div v-if="true" v-for="item in list">IF</div>
-    </div>"#,
-        json!({}),
-        r#"<div>
-        <div>IF</div>
-    </div>"#,
+        r#"<div><div v-if="show" v-for="item in list">IF{{ item }}</div></div>"#,
+        json!({ "show": true, "list": [1, 2] }),
+        r#"<div><div>IF1</div><div>IF2</div></div>"#,
+    );
+    assert_render_body_eq!(
+        r#"<div><div v-if="show" v-for="item in list">IF{{ item }}</div></div>"#,
+        json!({ "show": false, "list": [1, 2] }),
+        r#"<div></div>"#,
+    );
+}
+
+#[test]
+fn else_if_priority_over_for() {
+    assert_render_body_eq!(
+        r#"<div><p v-if="false">A</p><p v-else-if="true" v-for="n in list">B{{ n }}</p></div>"#,
+        json!({ "list": [1, 2] }),
+        r#"<div><p>B1</p><p>B2</p></div>"#,
     );
 }
 

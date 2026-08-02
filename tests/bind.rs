@@ -804,7 +804,7 @@ fn bind_camel_modifier_on_dynamic_arg() {
 fn bind_unknown_modifier_errors() {
     let err = render(
         r#"<div>
-        <span :foo.prop="value">elem</span>
+        <span :foo.sync="value">elem</span>
     </div>"#,
         json!({ "value": "x" }),
     )
@@ -816,8 +816,34 @@ fn bind_unknown_modifier_errors() {
             directive: Directive::Bind,
             kind: DirectiveErrorKind::UnknownModifier,
             expression: Some(name),
-        } if name == "prop"
+        } if name == "sync"
     ));
+}
+
+#[test]
+fn bind_prop_modifier_renders_a_plain_attribute() {
+    assert_render_body_eq!(
+        r#"<div>
+        <span :foo.prop="value">elem</span>
+    </div>"#,
+        json!({ "value": "x" }),
+        r#"<div>
+        <span foo="x">elem</span>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_attr_modifier_renders_a_plain_attribute() {
+    assert_render_body_eq!(
+        r#"<div>
+        <span :foo.attr="value">elem</span>
+    </div>"#,
+        json!({ "value": "x" }),
+        r#"<div>
+        <span foo="x">elem</span>
+    </div>"#,
+    );
 }
 
 // === Static / Dynamic Collision ===
@@ -849,15 +875,15 @@ fn bind_arg_shadows_static_attribute_that_precedes_it() {
 }
 
 #[test]
-fn bind_shadow_after_an_earlier_removal() {
-    // Queued removals land out of order here, and `apply` deletes back to front.
+fn bind_merges_and_overrides_in_one_pass() {
+    // A merged name and an overridden one both keep their first position.
     assert_render_body_eq!(
         r#"<div>
         <a href="/before" class="base" :class="{ on: true }" :href="url">link</a>
     </div>"#,
         json!({ "url": "/real" }),
         r#"<div>
-        <a class="base on" href="/real">link</a>
+        <a href="/real" class="base on">link</a>
     </div>"#,
     );
 }
@@ -929,6 +955,47 @@ fn dropped_later_binding_leaves_the_earlier_one() {
         json!({ "url": "/real", "missing": null }),
         r#"<div>
         <a href="/real">link</a>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_spread_loses_to_a_later_binding() {
+    assert_render_body_eq!(
+        r#"<div>
+        <a v-bind="{ href: '/spread' }" :href="url">a</a>
+        <a :href="url" v-bind="{ href: '/spread' }">b</a>
+    </div>"#,
+        json!({ "url": "/real" }),
+        r#"<div>
+        <a href="/real">a</a>
+        <a href="/spread">b</a>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_spread_loses_to_a_later_static_attribute() {
+    assert_render_body_eq!(
+        r#"<div>
+        <a v-bind="{ href: '/spread' }" href="/static">link</a>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <a href="/static">link</a>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_class_and_style_merge_in_source_order() {
+    assert_render_body_eq!(
+        r#"<div>
+        <p :class="'b'" class="a" :style="{ color: 'blue' }" style="color: red">x</p>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <p class="b a" style="color: red;">x</p>
     </div>"#,
     );
 }
@@ -1019,6 +1086,114 @@ fn bind_style_hyphenates_without_a_leading_dash() {
 }
 
 #[test]
+fn bind_style_hyphenates_a_key_parsed_from_css() {
+    assert_render_body_eq!(
+        r#"<div>
+        <p :style="['backgroundColor: red']">a</p>
+        <p style="backgroundColor: red" :style="{ color: 'x' }">b</p>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <p style="background-color: red;">a</p>
+        <p style="background-color: red; color: x;">b</p>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_style_normalizes_a_static_attribute() {
+    assert_render_body_eq!(
+        r#"<div>
+        <p style="color: red">a</p>
+        <p style="marginTop: 1px">b</p>
+        <p style="color: a; color: b">c</p>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <p style="color: red;">a</p>
+        <p style="margin-top: 1px;">b</p>
+        <p style="color: b;">c</p>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_style_keeps_an_unparseable_static_attribute() {
+    // Vue empties it instead; prevue never rewrites what it could not read.
+    assert_render_body_eq!(
+        r#"<div>
+        <p style="">a</p>
+        <p style>b</p>
+        <p style="???">c</p>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <p style="">a</p>
+        <p style="">b</p>
+        <p style="???">c</p>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_style_hyphenates_only_after_a_word_character() {
+    // Vue's `\B` fails right after `-`, `.` or a space, so no hyphen is added
+    // there.
+    assert_render_body_eq!(
+        r#"<div>
+        <p :style="{ 'a-Bc': 1, 'a.B': 1, 'a B': 1, '-Webkit-x': 1 }">elem</p>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <p style="a-bc: 1; a.b: 1; a b: 1; -webkit-x: 1;">elem</p>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_style_lowercases_the_whole_key() {
+    // Vue ends with `toLowerCase()`, which reaches past ASCII.
+    assert_render_body_eq!(
+        r#"<div>
+        <p :style="{ 'Ä': 1, fooBAR: 'x', a_B: 'y', x1Y: 'w' }">elem</p>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <p style="ä: 1; foo-b-a-r: x; a_-b: y; x1-y: w;">elem</p>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_style_keeps_custom_property_case() {
+    // The `--` exemption belongs to the stringify step, not to `hyphenate`.
+    assert_render_body_eq!(
+        r#"<div>
+        <p :style="{ '--Gap': 1, '--gap': 2 }">elem</p>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <p style="--Gap: 1; --gap: 2;">elem</p>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_style_hyphenates_late_enough_to_keep_spellings_apart() {
+    // Vue merges into a JavaScript object first, where the two are distinct
+    // keys, and only hyphenates on the way out.
+    assert_render_body_eq!(
+        r#"<div>
+        <p :style="['background-color: a', { backgroundColor: 'b' }]">elem</p>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <p style="background-color: a; background-color: b;">elem</p>
+    </div>"#,
+    );
+}
+
+#[test]
 fn bind_apostrophe_in_attribute_name_errors() {
     let err = render(
         r#"<div>
@@ -1029,4 +1204,286 @@ fn bind_apostrophe_in_attribute_name_errors() {
     .unwrap_err();
 
     assert!(matches!(err, Error::InvalidAttributeName { name } if name == "a'b"));
+}
+
+// === Props Vue Never Writes ===
+
+#[test]
+fn static_vue_internal_props_are_dropped() {
+    // Vue filters these by name, however they were written.
+    assert_render_body_eq!(
+        r#"<div>
+        <p key="k" ref="r" ref_key="rk" ref_for="rf" id="keep">x</p>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <p id="keep">x</p>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_spread_skips_vue_internal_props() {
+    assert_render_body_eq!(
+        r#"<div>
+        <p v-bind="{ key: 1, ref: 'r', innerHTML: 'h', textContent: 't', ref_key: 'k', ref_for: 'f', onClick: 'c' }">x</p>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <p>x</p>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_spread_keeps_a_lowercase_handler_attribute() {
+    // `isOn` is /^on[^a-z]/, so plain `onclick` is a real attribute.
+    assert_render_body_eq!(
+        r#"<div>
+        <p v-bind="{ onclick: 'go()' }">x</p>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <p onclick="go()">x</p>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_arg_skips_vue_internal_props() {
+    assert_render_body_eq!(
+        r#"<div>
+        <p :key="1" :ref="'r'">x</p>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <p>x</p>
+    </div>"#,
+    );
+}
+
+// === Directives With Nothing to Render ===
+
+#[test]
+fn unrendered_vue_directives_are_removed() {
+    // A directive is never an attribute, and the template a client framework
+    // would need is already gone by the time these reach the output.
+    assert_render_body_eq!(
+        r#"<div>
+        <input v-model="a">
+        <button @click="a">b</button>
+        <button v-on:click.prevent="a">c</button>
+        <p v-once>{{ a }}</p>
+        <p v-memo="[a]">e</p>
+        <p v-cloak>f</p>
+        <p v-slot:x>g</p>
+        <p #y>h</p>
+    </div>"#,
+        json!({ "a": "A" }),
+        r#"<div>
+        <input>
+        <button>b</button>
+        <button>c</button>
+        <p>A</p>
+        <p>e</p>
+        <p>f</p>
+        <p>g</p>
+        <p>h</p>
+    </div>"#,
+    );
+}
+
+#[test]
+fn a_removed_directive_leaves_other_attributes_alone() {
+    assert_render_body_eq!(
+        r#"<div>
+        <input id="a" v-model="a" :class="'c'" type="text">
+    </div>"#,
+        json!({ "a": "A" }),
+        r#"<div>
+        <input id="a" class="c" type="text">
+    </div>"#,
+    );
+}
+
+#[test]
+fn an_attribute_merely_containing_v_dash_is_not_a_directive() {
+    assert_render_body_eq!(
+        r#"<div>
+        <p data-v-foo="x" av-bar="y">elem</p>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <p data-v-foo="x" av-bar="y">elem</p>
+    </div>"#,
+    );
+}
+
+// === Non-Object v-bind ===
+
+#[test]
+fn bind_non_object_leaves_no_directive() {
+    for expr in ["'str'", "null", "1", "undefined", "nope"] {
+        let out = render(format!(r#"<p v-bind="{expr}">x</p>"#), json!({})).unwrap();
+        assert!(!out.contains("v-bind"), "{expr}: {out}");
+    }
+}
+
+// === Attribute Name Normalization ===
+
+#[test]
+fn bind_spread_maps_prop_names() {
+    assert_render_body_eq!(
+        r#"<div>
+        <p v-bind="{ className: 'c', htmlFor: 'f', httpEquiv: 'e', acceptCharset: 'utf-8' }">x</p>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <p class="c" for="f" http-equiv="e" accept-charset="utf-8">x</p>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_spread_class_name_merges_with_static_class() {
+    assert_render_body_eq!(
+        r#"<div>
+        <p class="base" v-bind="{ className: 'extra' }">x</p>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <p class="base extra">x</p>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_spread_lowercases_on_html_elements() {
+    assert_render_body_eq!(
+        r#"<div>
+        <button v-bind="{ Disabled: false, viewBox: 'x' }">b</button>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <button viewbox="x">b</button>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_spread_preserves_case_on_svg_and_custom_elements() {
+    assert_render_body_eq!(
+        r#"<div>
+        <svg v-bind="{ viewBox: '0 0 9 9' }"></svg>
+        <my-el v-bind="{ fooBar: '1' }"></my-el>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <svg viewBox="0 0 9 9"></svg>
+        <my-el fooBar="1"></my-el>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_camel_is_undone_outside_svg() {
+    // `.camel` exists for SVG; on an HTML element Vue folds the name back down.
+    assert_render_body_eq!(
+        r#"<div>
+        <div :view-box.camel="b"></div>
+    </div>"#,
+        json!({ "b": "x" }),
+        r#"<div>
+        <div viewbox="x"></div>
+    </div>"#,
+    );
+}
+
+// === Textarea ===
+
+#[test]
+fn bind_textarea_value_becomes_content() {
+    assert_render_body_eq!(
+        r#"<div>
+        <textarea :value="v"></textarea>
+        <textarea v-bind="{ value: v }"></textarea>
+    </div>"#,
+        json!({ "v": "hello" }),
+        r#"<div>
+        <textarea>hello</textarea>
+        <textarea>hello</textarea>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_textarea_value_takes_a_non_primitive() {
+    // The value becomes content, so the rule about what may go in an attribute
+    // does not reach it.
+    assert_render_body_eq!(
+        r#"<div>
+        <textarea :value="v"></textarea>
+        <textarea v-bind="{ value: v }"></textarea>
+    </div>"#,
+        json!({ "v": { "a": 1 } }),
+        r#"<div>
+        <textarea>[object Object]</textarea>
+        <textarea>[object Object]</textarea>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_textarea_value_is_not_interpolated_again() {
+    assert_render_body_eq!(
+        r#"<div>
+        <textarea :value="v"></textarea>
+    </div>"#,
+        json!({ "v": "{{ 1 + 1 }}" }),
+        r#"<div>
+        <textarea>{{ 1 + 1 }}</textarea>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_spread_skips_dom_property_keys() {
+    // `.foo` names a DOM property, which has no HTML spelling.
+    assert_render_body_eq!(
+        r#"<div>
+        <p v-bind="{ '.foo': 1 }">x</p>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <p>x</p>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_spread_drops_the_forced_attribute_marker() {
+    assert_render_body_eq!(
+        r#"<div>
+        <p v-bind="{ '^foo': 1 }">x</p>
+    </div>"#,
+        json!({}),
+        r#"<div>
+        <p foo="1">x</p>
+    </div>"#,
+    );
+}
+
+#[test]
+fn bind_camel_matches_the_regex_on_repeated_hyphens() {
+    // Vue's /-(\w)/g retries at the next position when a match fails, so the
+    // second hyphen of `a--b` is the one that pairs with `b`.
+    assert_render_body_eq!(
+        r#"<div>
+        <svg :a--b.camel="v" :c-.camel="v" :-d.camel="v"></svg>
+    </div>"#,
+        json!({ "v": "x" }),
+        r#"<div>
+        <svg a-B="x" c-="x" D="x"></svg>
+    </div>"#,
+    );
 }

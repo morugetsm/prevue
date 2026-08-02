@@ -6,12 +6,62 @@ use std::{
 use html5ever::{
     QualName,
     driver::ParseOpts,
-    parse_fragment,
+    ns, parse_fragment,
     tendril::{StrTendril, TendrilSink},
 };
 use markup5ever_rcdom::{Handle, Node, NodeData, RcDom};
 
 use crate::indent::{adjust_indent_in_subtree, get_indent};
+
+/// A `<template>` holds its content in a separate document that the serializer
+/// never walks, so move it into place once rendering is done.
+pub(crate) fn hoist_template_contents(handle: &Handle) {
+    let contents = match &handle.data {
+        NodeData::Element {
+            template_contents, ..
+        } => template_contents.borrow_mut().take(),
+        _ => None,
+    };
+
+    if let Some(contents) = contents {
+        let hoisted = std::mem::take(&mut *contents.children.borrow_mut());
+        for child in hoisted.iter() {
+            child.parent.set(Some(Rc::downgrade(handle)));
+        }
+        handle.children.borrow_mut().extend(hoisted);
+    }
+
+    for child in handle.children.borrow().iter() {
+        hoist_template_contents(child);
+    }
+}
+
+/// HTML forbids children here, so content given to one is dropped by the parser
+/// or escapes the element on serialization.
+pub(crate) fn is_void_element(name: &QualName) -> bool {
+    name.ns == ns!(html)
+        && matches!(
+            name.local.as_ref(),
+            "area"
+                | "base"
+                | "basefont"
+                | "bgsound"
+                | "br"
+                | "col"
+                | "embed"
+                | "frame"
+                | "hr"
+                | "img"
+                | "input"
+                | "keygen"
+                | "link"
+                | "meta"
+                | "param"
+                | "source"
+                | "track"
+                | "wbr"
+        )
+}
 
 pub(crate) fn is_raw_text_element(handle: &Handle) -> bool {
     let NodeData::Element { name, .. } = &handle.data else {
