@@ -1,38 +1,43 @@
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 use boa_engine::{JsValue, JsVariant};
-use html5ever::{serialize, tendril::StrTendril};
+use html5ever::{QualName, serialize, tendril::StrTendril};
 use markup5ever_rcdom::{Handle, NodeData, SerializableHandle};
 use serde::Serialize;
 
-mod attr_value;
-mod directive;
+mod attribute;
 mod dom;
 mod engine;
 mod error;
-mod indent;
-mod interpolation;
 mod template;
-use attr_value::{
-    AttrEdits, apply_modifiers, attribute_name_for, is_ignored_prop, is_textarea_value,
-    normalize_bound_attribute, normalize_style_attribute, strip_attr_marker,
+use attribute::{
+    AttrEdits, Unhandled, apply_modifiers, attribute_name_for, include_boolean_attr,
+    is_ignored_prop, is_textarea_value, normalize_style_attribute, render_dynamic_attr,
     validate_attribute_name,
 };
-use directive::Unhandled;
 use dom::{
-    clone_node, create_text_node, expand_targets, hoist_template_contents, is_element,
-    is_inert_template, is_non_whitespace_text_node, is_raw_text_element, is_void_element,
-    is_whitespace_text_node, parse_html_fragment, replace_element_children, replace_node_in_parent,
-    take_attribute, text_content,
+    attribute_value, clone_node, create_text_node, expand_targets, get_indent,
+    hoist_template_contents, is_element, is_inert_template, is_non_whitespace_text_node,
+    is_raw_text_element, is_void_element, is_whitespace_text_node, parse_html_fragment,
+    replace_element_children, replace_node_in_parent, take_attribute, text_content,
 };
 use engine::{Engine, ForBinding};
 pub use error::{Directive, DirectiveErrorKind, Error, Result};
-use indent::get_indent;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Walk {
     Children,
     Done,
+}
+
+impl Walk {
+    /// Once anything has replaced the children there is nothing left to walk
+    /// into, so `Done` sticks no matter what a later branch decides.
+    fn merge(&mut self, other: Self) {
+        if other == Self::Done {
+            *self = Self::Done;
+        }
+    }
 }
 
 /// Position in a `v-if` / `v-else-if` / `v-else` run of adjacent siblings.
@@ -216,7 +221,7 @@ fn is_setup_script(handle: &Handle) -> bool {
         })
 }
 
-fn take_v_pre(handle: &Handle) -> bool {
+fn take_pre(handle: &Handle) -> bool {
     let NodeData::Element { attrs, .. } = &handle.data else {
         return false;
     };
@@ -225,7 +230,7 @@ fn take_v_pre(handle: &Handle) -> bool {
 
 // Returns whether the node should stay in the output.
 fn traverse(handle: &Handle, engine: &mut Engine) -> Result<bool> {
-    if take_v_pre(handle) {
+    if take_pre(handle) {
         return Ok(true);
     }
 
@@ -237,6 +242,8 @@ fn traverse(handle: &Handle, engine: &mut Engine) -> Result<bool> {
             })?;
         return Ok(false);
     }
+
+    let select_model = take_select_model(handle)?;
 
     if render_content(handle, engine)? == Walk::Done {
         return Ok(true);
@@ -272,6 +279,10 @@ fn traverse(handle: &Handle, engine: &mut Engine) -> Result<bool> {
         Ok(())
     })?;
 
+    if let Some(model) = select_model {
+        mark_selected_options(handle, engine, &model);
+    }
+
     Ok(true)
 }
 
@@ -292,7 +303,7 @@ fn walk_siblings(
     let mut if_chain = IfChain::default();
 
     for node in nodes {
-        if take_v_pre(&node) {
+        if take_pre(&node) {
             if_chain.reset();
             place(node, Placement::Keep)?;
             continue;
@@ -323,23 +334,25 @@ fn walk_siblings(
 fn render_content(handle: &Handle, engine: &mut Engine) -> Result<Walk> {
     match &handle.data {
         NodeData::Element { name, attrs, .. } => {
-            let (has_v_text, has_v_html) = {
+            let (has_text, has_html, model) = {
                 let attrs_ref = attrs.borrow();
                 if attrs_ref.is_empty() {
                     return Ok(Walk::Children);
                 }
-                let mut has_v_text = false;
-                let mut has_v_html = false;
+                let mut has_text = false;
+                let mut has_html = false;
+                let mut model = None;
                 for attr in attrs_ref.iter() {
                     match attr.name.local.as_ref() {
-                        "v-text" => has_v_text = true,
-                        "v-html" => has_v_html = true,
+                        "v-text" => has_text = true,
+                        "v-html" => has_html = true,
+                        local if is_model(local) => model = Some(parse_model(attr, name)?),
                         _ => {}
                     }
                 }
-                (has_v_text, has_v_html)
+                (has_text, has_html, model)
             };
-            if has_v_text && has_v_html {
+            if has_text && has_html {
                 return Err(Error::ConflictingDirectives {
                     directives: vec![Directive::Text, Directive::Html],
                 });
@@ -352,14 +365,20 @@ fn render_content(handle: &Handle, engine: &mut Engine) -> Result<Walk> {
             for (i, attr) in attrs_ref.iter().enumerate() {
                 let name_ref: &str = attr.name.local.as_ref();
 
-                // Vue drops these whether they were written statically or bound.
+                // Dropped whether they were written statically or bound.
                 if is_ignored_prop(name_ref) {
                     edits.remove(i);
                     continue;
                 }
 
-                // Vue rewrites a static `style` into a binding, so it takes the
-                // same normalization.
+                // The value it renders depends on the props the element ends up
+                // with, so it is applied once the edits below have landed.
+                if is_model(name_ref) {
+                    edits.remove(i);
+                    continue;
+                }
+
+                // A static `style` takes the same normalization as a binding.
                 if name_ref == "style" {
                     if let Some(value) = normalize_style_attribute(attr.value.as_ref()) {
                         edits.set(i, "style".to_string(), value);
@@ -371,8 +390,7 @@ fn render_content(handle: &Handle, engine: &mut Engine) -> Result<Walk> {
                     if let Some(value) = engine.eval_str(attr.value.as_ref())
                         && !is_void_element(name)
                     {
-                        replace_element_children(handle, vec![create_text_node(&value)]);
-                        action = Walk::Done;
+                        action = set_text_content(handle, &value);
                     }
                     edits.remove(i);
                     continue;
@@ -404,41 +422,9 @@ fn render_content(handle: &Handle, engine: &mut Engine) -> Result<Walk> {
 
                 // v-bind object spread: v-bind="obj" or v-bind="{ key: value }"
                 if name_ref == "v-bind" {
-                    if let Ok(bound) = engine.eval_expr(attr.value.as_ref())
-                        && let JsVariant::Object(obj) = bound.variant()
-                    {
-                        for key in engine.object_keys(bound.clone()) {
-                            let Some(key_string) = key.as_string() else {
-                                continue;
-                            };
-                            let key = key_string.to_std_string_escaped();
-                            if is_ignored_prop(&key) {
-                                continue;
-                            }
-
-                            let raw = engine.get_prop(&obj, key_string);
-                            let attr_name = attribute_name_for(name, strip_attr_marker(key));
-
-                            if is_textarea_value(name, &attr_name) {
-                                if let Some(value) = engine.stringify(&raw) {
-                                    replace_element_children(handle, vec![create_text_node(&value)]);
-                                    action = Walk::Done;
-                                }
-                                continue;
-                            }
-
-                            let Some(value) = normalize_bound_attribute(engine, &attr_name, &raw)
-                            else {
-                                continue;
-                            };
-                            validate_attribute_name(&attr_name)?;
-                            edits.add(i, attr_name, attr.name.clone(), value);
-                        }
-                    }
-
-                    // The directive never belongs in the output, whatever it
-                    // evaluated to.
-                    edits.remove(i);
+                    action.merge(render_bind_spread(
+                        handle, name, attr, i, engine, &mut edits,
+                    )?);
                     continue;
                 }
 
@@ -447,67 +433,15 @@ fn render_content(handle: &Handle, engine: &mut Engine) -> Result<Walk> {
                     .strip_prefix(':')
                     .or_else(|| name_ref.strip_prefix("v-bind:"))
                 {
-                    let value_expr = attr.value.trim();
-                    let (arg, modifiers) = split_modifiers(arg_raw);
-
-                    let key = match dynamic_arg(arg) {
-                        // A dynamic name has no expression to fall back on.
-                        Some(_) if value_expr.is_empty() => {
-                            edits.remove(i);
-                            continue;
-                        }
-                        Some(inner) => match engine.eval_str(inner) {
-                            Some(key) if !key.is_empty() => key,
-                            _ => {
-                                edits.remove(i);
-                                continue;
-                            }
-                        },
-                        None => arg.to_string(),
-                    };
-                    let key = apply_modifiers(key, modifiers)?;
-                    if is_ignored_prop(&key) {
-                        edits.remove(i);
-                        continue;
-                    }
-                    let attr_name = attribute_name_for(name, strip_attr_marker(key));
-
-                    let target = if value_expr.is_empty() {
-                        arg
-                    } else {
-                        value_expr
-                    };
-
-                    let raw = engine.eval_expr(target).ok();
-
-                    if is_textarea_value(name, &attr_name) {
-                        if let Some(value) = raw.and_then(|value| engine.stringify(&value)) {
-                            replace_element_children(handle, vec![create_text_node(&value)]);
-                            action = Walk::Done;
-                        }
-                        edits.remove(i);
-                        continue;
-                    }
-
-                    let value =
-                        raw.and_then(|value| normalize_bound_attribute(engine, &attr_name, &value));
-
-                    match value {
-                        Some(value) if matches!(attr_name.as_str(), "class" | "style") => {
-                            edits.add(i, attr_name, attr.name.clone(), value);
-                        }
-                        Some(value) => {
-                            validate_attribute_name(&attr_name)?;
-                            edits.set(i, attr_name, value);
-                        }
-                        None => edits.remove(i),
-                    }
+                    action.merge(render_bind_arg(
+                        handle, name, attr, arg_raw, i, engine, &mut edits,
+                    )?);
                     continue;
                 }
 
-                // Whatever is left is a Vue directive with nothing to render, or
-                // a misspelling of one.
-                match directive::classify(name_ref) {
+                // Whatever is left is a directive with nothing to render, or a
+                // misspelling of one.
+                match attribute::classify(name_ref) {
                     Some(Unhandled::Unrendered) => edits.remove(i),
                     Some(Unhandled::Unknown) => {
                         return Err(Error::UnknownDirective {
@@ -520,17 +454,318 @@ fn render_content(handle: &Handle, engine: &mut Engine) -> Result<Walk> {
 
             drop(attrs_ref);
             edits.apply(attrs);
+
+            if let Some(model) = model {
+                action.merge(render_model(handle, name, attrs, engine, &model)?);
+            }
             Ok(action)
         }
         NodeData::Text { contents } => {
             let mut content = contents.borrow_mut();
 
-            if let Some(rendered) = interpolation::render_text(&content, engine) {
+            if let Some(rendered) = template::render_text(&content, engine) {
                 *content = StrTendril::from(rendered.as_str());
             }
             Ok(Walk::Children)
         }
         _ => Ok(Walk::Children),
+    }
+}
+
+/// A `textarea` has no value attribute, so a value bound to it becomes the
+/// element's content and there is nothing left to walk into.
+fn set_text_content(handle: &Handle, text: &str) -> Walk {
+    replace_element_children(handle, vec![create_text_node(text)]);
+    Walk::Done
+}
+
+/// `v-bind="obj"` — every own key of the object becomes an attribute, resolved
+/// at the directive's own position so source order survives.
+///
+/// The directive itself never belongs in the output, whatever it evaluated to.
+fn render_bind_spread(
+    handle: &Handle,
+    tag: &QualName,
+    attr: &html5ever::Attribute,
+    idx: usize,
+    engine: &mut Engine,
+    edits: &mut AttrEdits,
+) -> Result<Walk> {
+    edits.remove(idx);
+
+    let Ok(bound) = engine.eval_expr(attr.value.as_ref()) else {
+        return Ok(Walk::Children);
+    };
+    let JsVariant::Object(obj) = bound.variant() else {
+        return Ok(Walk::Children);
+    };
+
+    let mut action = Walk::Children;
+    for key in engine.object_keys(bound.clone()) {
+        let Some(key_string) = key.as_string() else {
+            continue;
+        };
+        let key = key_string.to_std_string_escaped();
+        if is_ignored_prop(&key) {
+            continue;
+        }
+
+        let raw = engine.get_prop(&obj, key_string);
+        let attr_name = attribute_name_for(tag, key);
+
+        if is_textarea_value(tag, &attr_name) {
+            if let Some(value) = engine.stringify(&raw) {
+                action = set_text_content(handle, &value);
+            }
+            continue;
+        }
+
+        let Some(value) = render_dynamic_attr(engine, &attr_name, &raw) else {
+            continue;
+        };
+        validate_attribute_name(&attr_name)?;
+        edits.add(idx, attr_name, attr.name.clone(), value);
+    }
+
+    Ok(action)
+}
+
+/// `:attr="value"` or `v-bind:attr="value"` — one name bound to one value.
+///
+/// `class` and `style` are added rather than set, since they merge with what
+/// the element already carries instead of replacing it.
+fn render_bind_arg(
+    handle: &Handle,
+    tag: &QualName,
+    attr: &html5ever::Attribute,
+    arg_raw: &str,
+    idx: usize,
+    engine: &mut Engine,
+    edits: &mut AttrEdits,
+) -> Result<Walk> {
+    let value_expr = attr.value.trim();
+    let (arg, modifiers) = split_modifiers(arg_raw);
+
+    let key = match dynamic_arg(arg) {
+        // A dynamic name has no expression to fall back on.
+        Some(_) if value_expr.is_empty() => None,
+        Some(inner) => engine.eval_str(inner).filter(|key| !key.is_empty()),
+        None => Some(arg.to_string()),
+    };
+    let Some(key) = key else {
+        edits.remove(idx);
+        return Ok(Walk::Children);
+    };
+
+    let key = apply_modifiers(key, modifiers)?;
+    if is_ignored_prop(&key) {
+        edits.remove(idx);
+        return Ok(Walk::Children);
+    }
+    let attr_name = attribute_name_for(tag, key);
+
+    // An empty expression falls back to the argument, so `:id` reads `id`.
+    let target = if value_expr.is_empty() {
+        arg
+    } else {
+        value_expr
+    };
+    let raw = engine.eval_expr(target).ok();
+
+    if is_textarea_value(tag, &attr_name) {
+        edits.remove(idx);
+        return Ok(match raw.and_then(|value| engine.stringify(&value)) {
+            Some(value) => set_text_content(handle, &value),
+            None => Walk::Children,
+        });
+    }
+
+    match raw.and_then(|value| render_dynamic_attr(engine, &attr_name, &value)) {
+        Some(value) if matches!(attr_name.as_str(), "class" | "style") => {
+            edits.add(idx, attr_name, attr.name.clone(), value);
+        }
+        Some(value) => {
+            validate_attribute_name(&attr_name)?;
+            edits.set(idx, attr_name, value);
+        }
+        None => edits.remove(idx),
+    }
+
+    Ok(Walk::Children)
+}
+
+/// A parsed `v-model`, held until the element's other props have settled.
+struct Model {
+    expression: String,
+    template: QualName,
+}
+
+fn is_model(local: &str) -> bool {
+    local == "v-model" || local.starts_with("v-model.")
+}
+
+fn parse_model(attr: &html5ever::Attribute, tag: &QualName) -> Result<Model> {
+    let invalid = |kind, expression| Error::InvalidDirective {
+        directive: Directive::Model,
+        kind,
+        expression,
+    };
+
+    let modifiers = attr.name.local.as_ref().trim_start_matches("v-model");
+    for modifier in modifiers.split('.').filter(|part| !part.is_empty()) {
+        // All three describe how a browser reads input back, which rendering
+        // never does.
+        if !matches!(modifier, "lazy" | "number" | "trim") {
+            return Err(invalid(
+                DirectiveErrorKind::UnknownModifier,
+                Some(modifier.to_string()),
+            ));
+        }
+    }
+
+    let expression = attr.value.trim();
+    if expression.is_empty() {
+        return Err(invalid(DirectiveErrorKind::MissingExpression, None));
+    }
+    if !matches!(tag.local.as_ref(), "input" | "textarea" | "select") {
+        return Err(invalid(
+            DirectiveErrorKind::UnsupportedElement,
+            Some(expression.to_string()),
+        ));
+    }
+
+    Ok(Model {
+        expression: expression.to_string(),
+        template: attr.name.clone(),
+    })
+}
+
+/// Write the model into the element, reading the props it ended up with so a
+/// bound `type` or `value` is already resolved.
+fn render_model(
+    handle: &Handle,
+    tag: &QualName,
+    attrs: &RefCell<Vec<html5ever::Attribute>>,
+    engine: &mut Engine,
+    model: &Model,
+) -> Result<Walk> {
+    let Ok(value) = engine.eval_expr(&model.expression) else {
+        return Ok(Walk::Children);
+    };
+
+    if tag.local.as_ref() == "textarea" {
+        return Ok(match engine.stringify(&value) {
+            Some(text) => set_text_content(handle, &text),
+            None => Walk::Children,
+        });
+    }
+
+    let mut edits = AttrEdits::default();
+    let mark = |name: &str, value: String, edits: &mut AttrEdits| {
+        edits.add_last(name.to_string(), model.template.clone(), value);
+    };
+
+    match attribute_value(attrs, "type").as_deref() {
+        Some("file") => {
+            return Err(Error::InvalidDirective {
+                directive: Directive::Model,
+                kind: DirectiveErrorKind::UnsupportedElement,
+                expression: Some(model.expression.clone()),
+            });
+        }
+        Some("radio") => {
+            let bound = attribute_value(attrs, "value");
+            if engine.loose_matches(&value, bound.as_deref(), false) {
+                mark("checked", String::new(), &mut edits);
+            }
+        }
+        Some("checkbox") => {
+            // These two only tell the check what to compare against.
+            let truthy = take_attribute(attrs, "true-value");
+            take_attribute(attrs, "false-value");
+
+            let checked = match truthy {
+                Some(truthy) => engine.loose_matches(&value, Some(&truthy), false),
+                None if Engine::is_array(&value) => {
+                    let bound = attribute_value(attrs, "value");
+                    engine.loose_matches(&value, bound.as_deref(), true)
+                }
+                None => include_boolean_attr(&value),
+            };
+            if checked {
+                mark("checked", String::new(), &mut edits);
+            }
+        }
+        _ => {
+            if let Some(text) = engine.stringify(&value) {
+                mark("value", text, &mut edits);
+            }
+        }
+    }
+
+    edits.apply(attrs);
+    Ok(Walk::Children)
+}
+
+/// A `<select>` marks its options only once they exist, so its model waits for
+/// the children to render.
+fn take_select_model(handle: &Handle) -> Result<Option<Model>> {
+    let NodeData::Element { name, attrs, .. } = &handle.data else {
+        return Ok(None);
+    };
+    if name.local.as_ref() != "select" {
+        return Ok(None);
+    }
+
+    let found = attrs
+        .borrow()
+        .iter()
+        .position(|attr| is_model(attr.name.local.as_ref()));
+    let Some(pos) = found else {
+        return Ok(None);
+    };
+
+    let attr = attrs.borrow_mut().remove(pos);
+    parse_model(&attr, name).map(Some)
+}
+
+fn mark_selected_options(handle: &Handle, engine: &mut Engine, model: &Model) {
+    let Ok(value) = engine.eval_expr(&model.expression) else {
+        return;
+    };
+    mark_options(handle, engine, &value, Engine::is_array(&value), model);
+}
+
+/// Only `<optgroup>` is descended into, so an option under anything else is
+/// left alone.
+fn mark_options(
+    handle: &Handle,
+    engine: &mut Engine,
+    value: &JsValue,
+    in_array: bool,
+    model: &Model,
+) {
+    for child in handle.children.borrow().iter() {
+        let NodeData::Element { name, attrs, .. } = &child.data else {
+            continue;
+        };
+
+        match name.local.as_ref() {
+            "option" => {
+                let option_value = attribute_value(attrs, "value");
+                if engine.loose_matches(value, option_value.as_deref(), in_array) {
+                    let mut edits = AttrEdits::default();
+                    edits.add_last(
+                        "selected".to_string(),
+                        model.template.clone(),
+                        String::new(),
+                    );
+                    edits.apply(attrs);
+                }
+            }
+            "optgroup" => mark_options(child, engine, value, in_array, model),
+            _ => {}
+        }
     }
 }
 
@@ -553,8 +788,8 @@ fn dynamic_arg(arg: &str) -> Option<&str> {
     arg.strip_prefix('[')?.strip_suffix(']')
 }
 
-/// Render a node whose branch was taken. Vue gives `v-if` the higher priority
-/// but still runs a `v-for` on the same element inside it.
+/// Render a node whose branch was taken. `v-if` holds the higher priority, so
+/// a `v-for` on the same element runs inside it and cannot feed it.
 fn render_branch(
     node: &Handle,
     engine: &mut Engine,
@@ -721,12 +956,12 @@ fn render_for(node: &Handle, engine: &mut Engine, expr: &str) -> Result<Vec<Hand
     engine.enter_scope().map_err(|err| Error::Internal {
         message: format!("failed to manage JavaScript scope: {err}"),
     })?;
-    let rendered = render_for_iterations(node, engine, &for_expr, iterable);
+    let rendered = render_list(node, engine, &for_expr, iterable);
     engine.exit_scope();
     rendered
 }
 
-fn render_for_iterations(
+fn render_list(
     node: &Handle,
     engine: &mut Engine,
     for_expr: &ForExpr,
@@ -790,8 +1025,8 @@ fn render_for_iterations(
     Ok(result_nodes)
 }
 
-/// Vue's `renderList` takes a number only as a non-negative integer range. The
-/// upper bound is prevue's own, matching what the integer branch can hold.
+/// A number is a loop range only when it is a non-negative integer. The upper
+/// bound matches what the integer branch can hold.
 fn is_for_range(count: f64) -> bool {
     count.fract() == 0.0 && (0.0..=f64::from(i32::MAX)).contains(&count)
 }

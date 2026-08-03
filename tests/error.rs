@@ -28,7 +28,11 @@ fn content_directive_conflict() {
 
 #[test]
 fn unknown_directive_error() {
-    for template in [r#"<div v-fi="a">x</div>"#, "<div v-els>x</div>", "<div v->x</div>"] {
+    for template in [
+        r#"<div v-fi="a">x</div>"#,
+        "<div v-els>x</div>",
+        "<div v->x</div>",
+    ] {
         let err = render(template, json!({})).unwrap_err();
         assert!(matches!(err, Error::UnknownDirective { .. }), "{template}");
     }

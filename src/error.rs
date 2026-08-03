@@ -1,6 +1,6 @@
 use std::fmt;
 
-/// A Vue-style template directive recognized by `prevue`.
+/// A template directive recognized by `prevue`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Directive {
     /// `v-if`
@@ -17,6 +17,8 @@ pub enum Directive {
     Html,
     /// `v-bind`, including the `:` shorthand
     Bind,
+    /// `v-model`
+    Model,
 }
 
 impl fmt::Display for Directive {
@@ -29,6 +31,7 @@ impl fmt::Display for Directive {
             Self::Text => f.write_str("v-text"),
             Self::Html => f.write_str("v-html"),
             Self::Bind => f.write_str("v-bind"),
+            Self::Model => f.write_str("v-model"),
         }
     }
 }
@@ -46,6 +49,8 @@ pub enum DirectiveErrorKind {
     InvalidExpression,
     /// The directive was given a modifier it does not define.
     UnknownModifier,
+    /// The directive does not apply to the element it was written on.
+    UnsupportedElement,
 }
 
 impl fmt::Display for DirectiveErrorKind {
@@ -56,6 +61,7 @@ impl fmt::Display for DirectiveErrorKind {
             Self::MissingAdjacentConditional => f.write_str("missing adjacent conditional"),
             Self::InvalidExpression => f.write_str("invalid expression"),
             Self::UnknownModifier => f.write_str("unknown modifier"),
+            Self::UnsupportedElement => f.write_str("unsupported element"),
         }
     }
 }
@@ -135,7 +141,7 @@ pub enum Error {
         name: String,
     },
 
-    /// An attribute spelled like a directive that Vue does not define.
+    /// An attribute spelled like a directive, but not one that exists.
     #[error("unknown directive {name:?}")]
     UnknownDirective {
         /// The attribute name as written.

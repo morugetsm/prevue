@@ -17,7 +17,7 @@ use boa_parser::{Parser, Source as ParserSource};
 use serde::Serialize;
 use serde_json::Value as JsonValue;
 
-use crate::{Error, Result};
+use crate::error::{Error, Result};
 
 #[derive(Clone, Debug)]
 pub(crate) enum ForBinding {
@@ -469,6 +469,24 @@ impl Engine {
         Some(self.eval_expr(code).ok()?.to_boolean())
     }
 
+    /// Whether `model` loosely equals `value`, or contains it when `in_array`.
+    /// The compared value always comes from an HTML attribute, so it goes in as
+    /// a literal rather than a second temporary.
+    pub fn loose_matches(&mut self, model: &JsValue, value: Option<&str>, in_array: bool) -> bool {
+        let literal = value.map_or_else(|| "null".to_string(), js_string_literal);
+
+        self.eval_with_temp_val(model.clone(), |temp_ref| {
+            format!("{LOOSE_MATCH_JS}(globalThis[{temp_ref}], {literal}, {in_array})")
+        })
+        .is_ok_and(|matched| matched.to_boolean())
+    }
+
+    /// Whether a value is an array, which is what makes a model check search
+    /// for the value rather than compare against it.
+    pub fn is_array(value: &JsValue) -> bool {
+        matches!(value.variant(), JsVariant::Object(obj) if obj.is_array())
+    }
+
     fn parse_setup_bindings(&mut self, code: &str) -> JsResult<Vec<String>> {
         let mut parser = Parser::new(ParserSource::from_bytes(code.as_bytes()));
         let script = parser.parse_script(&Scope::new_global(), self.context.interner_mut())?;
@@ -491,7 +509,7 @@ impl Engine {
     }
 }
 
-/// Vue's `toDisplayString`, which is what `{{ }}` renders with.
+/// How `{{ }}` turns a value into text.
 fn to_display_string(value: &JsValue, engine: &mut Engine) -> Option<String> {
     match value.variant() {
         JsVariant::Null | JsVariant::Undefined => None,
@@ -509,6 +527,48 @@ fn to_display_string(value: &JsValue, engine: &mut Engine) -> Option<String> {
             .map(|text| text.to_std_string_escaped()),
     }
 }
+
+// Written as JavaScript because the comparison recurses through dates, arrays
+// and plain objects, where the engine already knows each shape.
+const LOOSE_MATCH_JS: &str = r#"(function (model, value, inArray) {
+    const isObj = (v) => v !== null && typeof v === 'object';
+
+    const compareArrays = (a, b) => {
+        if (a.length !== b.length) return false;
+        let equal = true;
+        for (let i = 0; equal && i < a.length; i++) equal = looseEqual(a[i], b[i]);
+        return equal;
+    };
+
+    function looseEqual(a, b) {
+        if (a === b) return true;
+        let aValid = a instanceof Date;
+        let bValid = b instanceof Date;
+        if (aValid || bValid) return aValid && bValid ? a.getTime() === b.getTime() : false;
+        aValid = typeof a === 'symbol';
+        bValid = typeof b === 'symbol';
+        if (aValid || bValid) return a === b;
+        aValid = Array.isArray(a);
+        bValid = Array.isArray(b);
+        if (aValid || bValid) return aValid && bValid ? compareArrays(a, b) : false;
+        aValid = isObj(a);
+        bValid = isObj(b);
+        if (aValid || bValid) {
+            if (!aValid || !bValid) return false;
+            if (Object.keys(a).length !== Object.keys(b).length) return false;
+            for (const key in a) {
+                const aHas = a.hasOwnProperty(key);
+                const bHas = b.hasOwnProperty(key);
+                if (aHas !== bHas || !looseEqual(a[key], b[key])) return false;
+            }
+        }
+        return String(a) === String(b);
+    }
+
+    return inArray
+        ? model.findIndex((item) => looseEqual(item, value)) > -1
+        : looseEqual(model, value);
+})"#;
 
 // The tail of `toDisplayString`, ported as JavaScript so `JSON.stringify` keeps
 // its own cycle detection and the replacer reaches nested values.

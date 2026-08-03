@@ -182,7 +182,7 @@ fn template_pre_text_indent() {
 }
 
 #[test]
-fn template_v_pre_subtree_indent() {
+fn template_pre_subtree_indent() {
     assert_render_body_eq!(
         r#"<div>
         <template v-if="true">

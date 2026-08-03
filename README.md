@@ -115,36 +115,26 @@ one is cheap.
 | `v-bind`, `:attr` | Attribute binding |
 | `v-if` | Conditional rendering |
 | `v-else`, `v-else-if` | Conditional branches |
+| `v-show` | Hides the element with `display: none` |
 | `v-for` | List rendering |
 | `v-text` | Text replacement |
-| `v-show` | Hides the element with `display: none` |
 | `v-html` | Raw HTML replacement; inserted HTML is not compiled |
+| `v-model` | Fills a form control's `value`, `checked` or `selected` |
 | `v-pre` | Skip rendering logic |
+| `v-on`/`@`, `v-once`, `v-cloak`, `v-memo`, `v-slot`/`#` | Recognized, then dropped from the output |
 | `<template>` | Structural wrapper |
 | `<script type="prevue">` | Render-order setup script |
 
 
 ## Behavior Notes
 
-### HTML5 Parsing
+### Rendering
 
-This library uses [html5ever](https://github.com/servo/html5ever), which follows HTML5 spec strictly:
-
-- Attribute names are lowercased (for example, `:MyAttr` becomes `:myattr`). On SVG and MathML, where case matters, `.camel` restores it: `:view-box.camel` binds `viewBox`.
-- Dynamic binding names are lowercased, so `:[dynamicKey]` looks up `dynamickey`.
-- A set boolean attribute is written as `disabled=""` rather than bare `disabled`, since the serializer always writes a value — HTML checks presence either way.
 - Output is serialized as a complete HTML document with `<html>`, `<head>`, and `<body>`.
-
-### Directives
-
-- A truthy `v-show` adds nothing. Vue's server renderer writes `style=""` there; its own browser runtime does not.
-- Directives prevue does not implement — `v-model`, `v-on` and `@`, `v-once`, `v-memo`, `v-cloak`, `v-slot` and `#` — are removed, since a directive is never an attribute. Vue's server renderer turns `v-model` into a `value` or `checked` attribute; prevue only removes it.
+- Attribute names are lowercased by [html5ever](https://github.com/servo/html5ever), so `:MyAttr` becomes `:myattr` and `:[dynamicKey]` looks up `dynamickey`. On SVG and MathML, where case matters, `.camel` restores it: `:view-box.camel` binds `viewBox`.
+- When two sources set the same attribute, the one written last wins; `class` and `style` merge in that order.
+- A static `style` attribute is rewritten like a binding, so `style="marginTop: 1px"` becomes `margin-top: 1px;`.
 - An attribute spelled like a directive Vue does not define, such as a misspelled `v-els`, is an error.
-
-### Attribute Binding
-
-- When two sources set the same attribute, the one written last wins, and `class` and `style` merge in that order. Vue keeps the first instead unless a `v-bind` object is involved.
-- A static `style` attribute is parsed and rewritten like a binding, so `style="marginTop: 1px"` becomes `margin-top: 1px;`. One that yields no declarations is left exactly as written, where Vue empties it, and `v-pre` skips this along with everything else.
 
 ### Data Scope
 

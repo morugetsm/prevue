@@ -1270,7 +1270,6 @@ fn unrendered_vue_directives_are_removed() {
     // would need is already gone by the time these reach the output.
     assert_render_body_eq!(
         r#"<div>
-        <input v-model="a">
         <button @click="a">b</button>
         <button v-on:click.prevent="a">c</button>
         <p v-once>{{ a }}</p>
@@ -1281,7 +1280,6 @@ fn unrendered_vue_directives_are_removed() {
     </div>"#,
         json!({ "a": "A" }),
         r#"<div>
-        <input>
         <button>b</button>
         <button>c</button>
         <p>A</p>
@@ -1297,11 +1295,11 @@ fn unrendered_vue_directives_are_removed() {
 fn a_removed_directive_leaves_other_attributes_alone() {
     assert_render_body_eq!(
         r#"<div>
-        <input id="a" v-model="a" :class="'c'" type="text">
+        <button id="a" @click="a" :class="'c'" type="button">x</button>
     </div>"#,
         json!({ "a": "A" }),
         r#"<div>
-        <input id="a" class="c" type="text">
+        <button id="a" class="c" type="button">x</button>
     </div>"#,
     );
 }

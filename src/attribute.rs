@@ -4,9 +4,12 @@ use boa_engine::{JsValue, JsVariant};
 use html5ever::{QualName, ns, tendril::StrTendril};
 use serde_json::Value as JsonValue;
 
-use crate::{Directive, DirectiveErrorKind, Error, Result, engine::Engine};
+use crate::{
+    engine::Engine,
+    error::{Directive, DirectiveErrorKind, Error, Result},
+};
 
-pub(crate) fn normalize_bound_attribute(
+pub(crate) fn render_dynamic_attr(
     engine: &mut Engine,
     key: &str,
     value: &JsValue,
@@ -26,13 +29,13 @@ pub(crate) fn normalize_bound_attribute(
     }
 
     if is_boolean_attribute(key) {
-        return is_present(value).then(String::new);
+        return include_boolean_attr(value).then(String::new);
     }
 
     engine.stringify(value)
 }
 
-/// The values Vue is willing to write into an attribute.
+/// The value kinds an attribute may hold. Anything else drops the attribute.
 fn is_renderable_attr_value(value: &JsValue) -> bool {
     matches!(
         value.variant(),
@@ -43,8 +46,8 @@ fn is_renderable_attr_value(value: &JsValue) -> bool {
     )
 }
 
-/// Vue keeps a boolean attribute when the value is truthy or the empty string.
-fn is_present(value: &JsValue) -> bool {
+/// A boolean attribute is kept when the value is truthy or the empty string.
+pub(crate) fn include_boolean_attr(value: &JsValue) -> bool {
     value.to_boolean() || matches!(value.variant(), JsVariant::String(text) if text.is_empty())
 }
 
@@ -88,8 +91,8 @@ pub(crate) fn apply_modifiers(name: String, modifiers: &str) -> Result<String> {
         .filter(|modifier| !modifier.is_empty())
         .try_fold(name, |name, modifier| match modifier {
             "camel" => Ok(camelize(&name)),
-            // Vue's server compiler drops `.prop`, since no DOM property exists
-            // to set; a `.`-prefixed key arriving through `v-bind` still does.
+            // Rendering to HTML has no DOM property to set, so `.prop` only
+            // reads as documentation. A `.`-prefixed key still drops.
             "prop" => Ok(name),
             "attr" => Ok(format!("^{name}")),
             unknown => Err(Error::InvalidDirective {
@@ -100,14 +103,15 @@ pub(crate) fn apply_modifiers(name: String, modifiers: &str) -> Result<String> {
         })
 }
 
-/// `view-box` becomes `viewBox`, matching Vue's `camelize`.
+/// `view-box` becomes `viewBox`: a `-` before a word character is dropped and
+/// that character uppercased.
 fn camelize(name: &str) -> String {
     let mut camelized = String::with_capacity(name.len());
     let mut chars = name.chars().peekable();
 
     while let Some(ch) = chars.next() {
-        // Only a `-` directly before a word character is consumed. Peeking
-        // leaves the rest to start a match of its own, as the regex does.
+        // Peeking leaves a `-` that matched nothing free to start the next
+        // match itself, so `a--b` becomes `a-B`.
         let word = ch == '-'
             && chars
                 .peek()
@@ -123,8 +127,8 @@ fn camelize(name: &str) -> String {
     camelized
 }
 
-/// Props Vue's `ssrRenderAttrs` never writes: its own bookkeeping, and event
-/// listeners like `onClick` — the plain `onclick` attribute still goes through.
+/// Names that never reach the output: render bookkeeping, and event listeners
+/// like `onClick` — the plain `onclick` attribute still goes through.
 pub(crate) fn is_ignored_prop(key: &str) -> bool {
     matches!(
         key,
@@ -134,24 +138,25 @@ pub(crate) fn is_ignored_prop(key: &str) -> bool {
         || key.starts_with('.')
 }
 
-/// Vue marks a forced attribute with `^`; the marker itself never reaches HTML.
-pub(crate) fn strip_attr_marker(key: String) -> String {
-    match key.strip_prefix('^') {
-        Some(rest) => rest.to_string(),
-        None => key,
-    }
-}
-
-/// Vue's `isOn`: `on` followed by a character that is not lowercase ASCII.
+/// An event listener name: `on` followed by a character that is not lowercase
+/// ASCII, which is what separates `onClick` from the `onclick` attribute.
 fn is_on(key: &str) -> bool {
     key.strip_prefix("on")
         .and_then(|rest| rest.chars().next())
         .is_some_and(|ch| !ch.is_ascii_lowercase())
 }
 
-/// Vue keeps a prop name as written on SVG, MathML and custom elements, and
-/// folds everything else down to an HTML attribute name.
+/// SVG, MathML and custom elements keep a name as written, since case carries
+/// meaning there. Everything else folds down to an HTML attribute name.
+///
+/// A leading `^` forces a name to render as an attribute; the marker itself
+/// never reaches HTML, whichever of the two paths the name takes.
 pub(crate) fn attribute_name_for(tag: &QualName, key: String) -> String {
+    let key = match key.strip_prefix('^') {
+        Some(rest) => rest.to_string(),
+        None => key,
+    };
+
     if tag.ns == ns!(svg) || tag.ns == ns!(mathml) || tag.local.contains('-') {
         return key;
     }
@@ -166,14 +171,13 @@ pub(crate) fn attribute_name_for(tag: &QualName, key: String) -> String {
     }
 }
 
-/// Vue renders a bound `value` on a textarea as its content, since the element
-/// has no value attribute.
+/// A textarea has no value attribute, so a bound `value` becomes its content.
 pub(crate) fn is_textarea_value(tag: &QualName, name: &str) -> bool {
     name == "value" && tag.local.as_ref() == "textarea"
 }
 
-/// Vue's `isSSRSafeAttrName`, plus `\0` and `\r` — rejecting more than Vue can
-/// only keep output Vue would never produce anyway.
+/// A name that would break out of the attribute it is written into, or split
+/// into two, is refused rather than serialized.
 pub(crate) fn validate_attribute_name(name: &str) -> Result<()> {
     (!name.is_empty()
         && name.chars().all(|ch| {
@@ -215,8 +219,8 @@ fn normalize_class(value: &JsonValue) -> Option<String> {
     (!classes.is_empty()).then(|| classes.join(" "))
 }
 
-/// A style object in source order. Vue relies on JavaScript object semantics
-/// here, so a repeated key keeps its position but takes the newer value.
+/// Declarations in source order, with object semantics: a repeated key keeps
+/// its position but takes the newer value.
 type Declarations = Vec<(String, String)>;
 
 fn set_declaration(declarations: &mut Declarations, name: String, value: String) {
@@ -269,13 +273,15 @@ fn parse_string_style(css: &str) -> Declarations {
     let mut depth = 0usize;
     let mut start = 0;
 
-    // Vue collects into an object, so a repeated property keeps its place and
-    // takes the newer value.
     let mut push = |item: &str| {
         if let Some((name, value)) = item.split_once(':') {
             let name = name.trim();
             if !name.is_empty() {
-                set_declaration(&mut declarations, name.to_string(), value.trim().to_string());
+                set_declaration(
+                    &mut declarations,
+                    name.to_string(),
+                    value.trim().to_string(),
+                );
             }
         }
     };
@@ -297,8 +303,8 @@ fn parse_string_style(css: &str) -> Declarations {
     declarations
 }
 
-/// Vue's `transformStyle` rewrites a static `style` attribute into a binding,
-/// so it takes the same normalization. `None` leaves the attribute as written.
+/// A static `style` attribute takes the same normalization as a binding.
+/// `None` leaves the attribute exactly as written.
 pub(crate) fn normalize_style_attribute(css: &str) -> Option<String> {
     let declarations = parse_string_style(css);
     (!declarations.is_empty()).then(|| stringify_style(&declarations))
@@ -323,7 +329,7 @@ fn strip_css_comments(css: &str) -> Cow<'_, str> {
     Cow::Owned(stripped)
 }
 
-/// Vue writes only strings and numbers into a declaration.
+/// Only strings and numbers become a declaration value.
 fn declaration_value(value: &JsonValue) -> Option<String> {
     match value {
         JsonValue::String(value) if !value.is_empty() => Some(value.clone()),
@@ -332,9 +338,9 @@ fn declaration_value(value: &JsonValue) -> Option<String> {
     }
 }
 
-/// Vue hyphenates here rather than while collecting, so a key written in CSS
-/// and the same key written in JavaScript stay distinct until the very end.
-/// Custom properties are exempt, which is also what keeps their case.
+/// Hyphenating here rather than while collecting keeps a key written in CSS
+/// and the same key written in JavaScript distinct until the very end. Custom
+/// properties are exempt, which is also what keeps their case.
 fn stringify_style(declarations: &Declarations) -> String {
     declarations
         .iter()
@@ -349,9 +355,9 @@ fn stringify_style(declarations: &Declarations) -> String {
         .join(" ")
 }
 
-/// `viewBox` becomes `view-box`, the inverse of [`camelize`]. Vue's `\B([A-Z])`
-/// only holds after a word character, so `a-Bc` becomes `a-bc` rather than
-/// `a--bc`, and its `toLowerCase` reaches the whole string.
+/// `viewBox` becomes `view-box`, the inverse of [`camelize`]. A `-` only goes
+/// in after a word character, so `a-Bc` becomes `a-bc` rather than `a--bc`,
+/// and the whole name is lowercased whether or not one went in.
 fn hyphenate(name: &str) -> Cow<'_, str> {
     if name.is_ascii() && !name.bytes().any(|byte| byte.is_ascii_uppercase()) {
         return Cow::Borrowed(name);
@@ -388,8 +394,8 @@ pub(crate) fn merge_class(existing: &str, value: &str) -> String {
     }
 }
 
-/// Vue's compiler folds a static `style` and a binding into one array, so they
-/// go through the same key merge rather than sitting side by side.
+/// A static `style` and a binding fold into one declaration list rather than
+/// sitting side by side, so a repeated property resolves once.
 pub(crate) fn merge_style(existing: &str, value: &str) -> String {
     let mut declarations = parse_string_style(existing);
     for (name, value) in parse_string_style(value) {
@@ -426,8 +432,8 @@ impl AttrEdits {
         self.ops.push((idx, Op::Add(name, template, value)));
     }
 
-    /// Vue merges directive props after everything the element wrote itself, so
-    /// `v-show` wins over a `style` binding no matter which came first.
+    /// Lands after everything the element wrote itself, so `v-show` wins over a
+    /// `style` binding no matter which came first.
     pub(crate) fn add_last(&mut self, name: String, template: QualName, value: String) {
         self.trailing.push((name, template, value));
     }
@@ -447,7 +453,7 @@ impl AttrEdits {
         for (idx, attr) in attrs_mut.iter().enumerate() {
             let mut consumed = false;
             while let Some((_, op)) = ops.next_if(|(op_idx, _)| *op_idx == idx) {
-                push_merged(
+                merge_props(
                     &mut merged,
                     match op {
                         Op::Set(name, value) => rename(&attr.name, &name, &value),
@@ -458,12 +464,12 @@ impl AttrEdits {
             }
 
             if !consumed && !self.removes.contains(&idx) {
-                push_merged(&mut merged, attr.clone());
+                merge_props(&mut merged, attr.clone());
             }
         }
 
         for (name, template, value) in self.trailing {
-            push_merged(&mut merged, rename(&template, &name, &value));
+            merge_props(&mut merged, rename(&template, &name, &value));
         }
 
         *attrs_mut = merged;
@@ -482,9 +488,9 @@ fn rename(template: &QualName, name: &str, value: &str) -> html5ever::Attribute 
     }
 }
 
-/// Vue's `mergeProps`: a repeated name keeps its first position and takes the
-/// newer value, except `class` and `style`, which merge instead.
-fn push_merged(attrs: &mut Vec<html5ever::Attribute>, attr: html5ever::Attribute) {
+/// A repeated name keeps its first position and takes the newer value, except
+/// `class` and `style`, which merge instead.
+fn merge_props(attrs: &mut Vec<html5ever::Attribute>, attr: html5ever::Attribute) {
     let Some(existing) = attrs
         .iter_mut()
         .find(|kept| kept.name.local == attr.name.local)
@@ -502,4 +508,59 @@ fn push_merged(attrs: &mut Vec<html5ever::Attribute>, attr: html5ever::Attribute
         }
     };
     existing.value = StrTendril::from(merged.as_str());
+}
+
+/// What is left of a directive attribute once every render branch has passed
+/// on it.
+pub(crate) enum Unhandled {
+    /// A directive that names something the rendered HTML cannot carry, so it
+    /// leaves no trace rather than becoming an attribute.
+    Unrendered,
+    /// Not a directive at all — a misspelling.
+    Unknown,
+}
+
+pub(crate) fn classify(local: &str) -> Option<Unhandled> {
+    let name = directive_name(local)?;
+
+    Some(match is_builtin(name) {
+        true => Unhandled::Unrendered,
+        false => Unhandled::Unknown,
+    })
+}
+
+/// A directive is written `v-name:arg.modifier`, and each shorthand stands in
+/// for the directive it names.
+fn directive_name(local: &str) -> Option<&str> {
+    let rest = match local.as_bytes().first()? {
+        b'@' => return Some("on"),
+        b'#' => return Some("slot"),
+        b':' | b'.' => return Some("bind"),
+        _ => local.strip_prefix("v-")?,
+    };
+
+    rest.split([':', '.']).next()
+}
+
+/// Every directive name the template syntax defines, whether or not prevue
+/// renders it.
+fn is_builtin(name: &str) -> bool {
+    matches!(
+        name,
+        "bind"
+            | "cloak"
+            | "else-if"
+            | "else"
+            | "for"
+            | "html"
+            | "if"
+            | "model"
+            | "on"
+            | "once"
+            | "pre"
+            | "show"
+            | "slot"
+            | "text"
+            | "memo"
+    )
 }
